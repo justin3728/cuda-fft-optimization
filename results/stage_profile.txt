@@ -1,0 +1,16 @@
+fft_block_1024_specialized: registers/thread=78, static shared=16896 bytes, dynamic shared/launch=0 bytes, local/thread=0 bytes
+Spill stores/loads: see PTXAS build output for this kernel.
+
+N=1048576, batch=1, forward, warmup=10/pass, repeats=100/pass
+Stage intervals exclude H2D/D2H; include event timing effects.
+Stage                                     Mean (ms)   % profiled total
+transpose_opt                              0.029848             15.01%
+first fft_block_1024_specialized           0.061573             30.97%
+transpose_and_twiddle                      0.023276             11.71%
+second fft_block_1024_specialized          0.061645             31.01%
+transpose_square_inplace                   0.022446             11.29%
+Sum of stage means:       0.198787 ms
+Instrumented total mean:  0.198787 ms
+Start/stop-only total:    0.191708 ms
+Difference between runs: +0.007079 ms (includes run variability)
+Instrumented/uninstrumented output: bitwise identical.

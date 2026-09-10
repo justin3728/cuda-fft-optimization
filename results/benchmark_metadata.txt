@@ -1,0 +1,14 @@
+GPU: NVIDIA A100-SXM4-40GB
+GPU compute capability: 8.0
+CPU: Intel(R) Xeon(R) CPU @ 2.20GHz
+CUDA runtime: 12.8
+CUDA driver API version: 13.0
+FFTW version: fftw-3.3.10-sse2-avx
+FFTW multi-thread setting: 8
+Precision: double complex (FP64)
+Direction: forward
+Batch size: 1
+Warmup: 20
+Repeats: 100
+FFTW planner: FFTW_MEASURE
+Accuracy tolerance: 1.000000e-08

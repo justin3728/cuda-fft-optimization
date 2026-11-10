@@ -1,7 +1,7 @@
 # 專案計畫與狀態（single source of truth）
 
 > 所有狀態以本檔為準，不依賴對話記憶。每次任務開始／結束、每次 A100 數據回來都要更新「目前狀態」與「任務看板」。
-> 最後更新：2026-11-11（建立初稿）
+> 最後更新：2026-11-11（平台定為 Colab A100；新增 T0 preflight）
 
 ## 1. 目標
 
@@ -72,8 +72,10 @@
 
 | ID | 任務 | 負責 | 狀態 |
 |---|---|---|---|
-| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | 📝 prompt 已寫：`docs/codex-tasks/T1-measurement-tooling.md`，待使用者貼給 Codex |
-| T1-run | 在 A100 跑 `scripts/run_t1_all.sh`，commit `results/<tag>/` | 使用者 | ⏳ 等 T1 merge |
+| T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ⏳ 可立即執行 |
+| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | 🔨 已交給 Codex（2026-11-11），等 PR |
+| T1b | Colab notebook 包裝 `run_t1_all.sh`（clone/build/run/push） | Codex 或 Claude | ⏳ T1 審完後 |
+| T1-run | 在 Colab A100 跑 T1，commit `results/<tag>/` | 使用者 | ⏳ 等 T1 + T1b merge |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
 | M2 / T2 | 新 API 骨架 + correctness 測試（對 cuFFT，全 N/batch）+ 單 kernel 小 N | Codex | ⏳ 待 T1 數據後撰寫 |
 | T3 | 2-pass 實作（第一版求正確，標準 radix） | Codex | ⏳ |
@@ -85,10 +87,25 @@
 
 - 已讀完 `fft_cuda.cu`、`fft_cuda.h`、`benchmark.cpp`、`profile_stages.cu`、`Makefile`、`results/`。
 - 建立本檔、`docs/optimization-log.md`、T1 prompt。
-- **下一步**：使用者把 `docs/codex-tasks/T1-measurement-tooling.md` 貼給 Codex。
+- T1 已交給 Codex（2026-11-11）。平台定為 Colab A100（§8）。
+- **下一步**：(1) 使用者在 Colab A100 跑 `notebooks/colab_preflight.ipynb`，把最後一格的摘要貼回；(2) Codex 開 T1 PR 後交給 Claude 審。
 
-## 8. 開放問題 / 待使用者決定
+## 8. 決策紀錄
 
-1. 租用的 A100 型號必須固定並記錄（40GB SXM4 HBM ~1.56 TB/s，80GB SXM4 ~2.0 TB/s，PCIe 版功耗與時脈不同；L2 都是 40 MB）。上一版數據是 **A100-SXM4-40GB**。換型號 = 所有上限重新量。
-2. 雲端機器是否允許 ncu 讀 performance counter（`ERR_NVGPUCTRPERM`）與 `nvidia-smi -lgc` 鎖頻；T1 腳本會偵測並記錄。
+| 日期 | 決策 | 理由 / 影響 |
+|---|---|---|
+| 2026-11-11 | 實作由 Codex 負責（使用者有 Codex 額度要用）；使用者貼 prompt | Claude 審 PR、分析數據 |
+| 2026-11-11 | **GPU 平台固定為 Google Colab A100**，正式數據只認 `A100-SXM4-40GB` | 與舊數據同型號。每次執行前 notebook 先 assert GPU 名稱，不符就中止、不量。曾評估 gputw.ai（只有 A100 80GB、NT$38.4/hr、當時無現貨），未採用 |
+
+### Colab 對工作流程的影響
+- 執行入口是 notebook（`notebooks/`），使用者開 notebook → Run all → 結果 push 回 GitHub（token 放 Colab Secrets，名稱 `GITHUB_TOKEN`，不寫進 notebook）。
+- Colab 磁碟是暫存的：每次跑完 **先 push `results/` 再斷線**。
+- 無法鎖頻（`nvidia-smi -lgc` 無權限屬預期），以時脈紀錄 + 多次 trial 中位數代替。
+- **最大風險**：Colab 容器內 ncu 能否讀 performance counter。由 `notebooks/colab_preflight.ipynb` 驗證；若不行，核心目標（ncu 達成率）需改平台或改用 CUPTI 以外的替代量測，屆時再討論。
+
+## 9. 開放問題 / 待使用者決定
+
+1. ~~A100 型號~~ → 已決定：Colab A100-SXM4-40GB。
+2. Colab 上 ncu 是否能讀 counter → 待 preflight 結果。
 3. batched 的定義（預設：N×batch 固定為 2^25 個元素 = 512 MiB，遠超 L2，看 HBM 行為；另加 batch=8 小批次）。可調。
+4. T1 的 `run_t1_all.sh` 需要一個 Colab notebook 包裝（clone、build、跑、push）；待 T1 PR 審完後作為 T1b 交給 Codex，或由 Claude 直接寫（檔案很小）。

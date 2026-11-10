@@ -79,6 +79,8 @@
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
 | M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 📝 prompt `docs/codex-tasks/T2-two-pass-v1.md`（2026-11-11 提前開工，與 T1-fix-1 平行；分解公式已用 numpy 驗證） |
 | T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend | Codex | ⏳ 等 PR #1 + T2 merge |
+| CI | GitHub Actions：每個 PR 跑 pytest（含 `fft2/reference`）、`bash -n`/shellcheck、`run_t1_all.sh --dry-run`（全部不需 GPU） | Codex | ⏳ 排在 PR #1 merge 後（避免改到 PR #1 檔案） |
+| Harness | `scripts/colab/run.sh`：一次 GPU 執行的完整流程，失敗也自動 stop | Claude | ✅ 2026-11-11（CPU runtime 端到端測試） |
 | ~~T3~~ | 併入 T2 | — | ✖ |
 | T4.x | 依 ncu 數據逐項調優（每項一個 log 條目） | Codex / Claude | ⏳ |
 | T5 | batched 調優、README 瓶頸分析與 before/after | Codex / Claude | ⏳ |

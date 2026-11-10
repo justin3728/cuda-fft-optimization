@@ -17,6 +17,15 @@ This task is **version 1: correct, clean, and structurally 2-pass**. Performance
 2. CUDA C++17, `nvcc`, target `sm_80` (must also compile for `sm_89` so it can be smoke-tested on an L4). CUDA 13 toolkit: do not use removed `cudaDeviceProp` fields (`clockRate`, `memoryClockRate`, …).
 3. Use `size_t` for element counts and offsets (N × batch reaches 2^25+).
 4. No performance claims anywhere. Nothing is verified on GPU by you.
+5. **Commit and push to `codex/t2-two-pass-v1` after each completed deliverable** (WIP commits are fine; open the PR as a draft early). Your usage window may end mid-task; unpushed work cannot be reviewed or resumed.
+
+## Gate command (run on GPU by Claude)
+
+```bash
+make -C fft2 CUDA_ARCH=sm_89 && fft2/fft2_test        # Colab L4 first (correctness)
+make -C fft2 CUDA_ARCH=sm_80 && fft2/fft2_test        # then A100
+```
+Exit code 0 = pass. Make sure `fft2_test` prints one line per config and a final summary line, so a failure is diagnosable from the log alone.
 
 ## Mathematical decomposition (use exactly this; it is what the reference model checks)
 

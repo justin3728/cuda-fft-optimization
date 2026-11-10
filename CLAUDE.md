@@ -10,6 +10,14 @@ FP64 complex-to-complex forward CUDA FFT being rebuilt from a 5-pass legacy pipe
 - **Codex**: implements. Has no GPU; the owner pastes prompts from `docs/codex-tasks/`. Codex pushes to its own `codex/*` branches and opens PRs.
 - **Owner**: pastes prompts, approves spending (GPU time), makes direction decisions. Writes in Traditional Chinese; reply in Traditional Chinese.
 - Only GPU measurements count as evidence of "correct" or "faster". Label anything else as a hypothesis.
+- **This is the owner's job-hunting portfolio.** Keep the owner in the loop on judgment, not on mechanics: the owner decides new task directions and approves every optimization-log conclusion (Claude drafts, owner reviews and rewords). Fix rounds and other mechanical dispatch may go to Codex directly via `codex exec` (see below).
+
+## Writing Codex tasks (`docs/codex-tasks/*.md`)
+- **Size every task to fit one Codex 5-hour usage window** (the owner is on ChatGPT Plus). Split larger work into sequential tasks.
+- Every prompt must say: commit and push to the task branch after each completed item (WIP is fine), so a usage-limit stop never strands work locally.
+- Every prompt defines a **gate command**: one command run on the GPU whose exit code decides pass/fail (e.g. `fft2/fft2_test`, or `results/<tag>/stage_status.csv` all OK). Gate on Colab **L4 first** (cheap, correctness/compile), then **A100** only for performance. Batch several A100 experiments into one allocation.
+- Restrict each task to its own directories so parallel Codex tasks never touch the same files.
+- Mechanical dispatch: `C:\Users\Justin\AppData\Local\OpenAI\Codex\bin\<hash>\codex.exe exec ...` (bundled with the Codex desktop app, logged in with the owner's account; same quota). Find the exact path with `find /c/Users/Justin/AppData/Local/OpenAI/Codex/bin -name codex.exe`.
 
 ## Hard rules
 1. Legacy implementation (`fft_cuda.cu`, `fft_cuda.h`, `benchmark.cpp`, `profile_stages.cu`) stays as a selectable baseline; its numeric output must not change. New implementation lives in `fft2/`.
@@ -19,6 +27,15 @@ FP64 complex-to-complex forward CUDA FFT being rebuilt from a 5-pass legacy pipe
 5. Never fabricate performance numbers.
 
 ## Running GPU jobs (Colab CLI)
+**Use `scripts/colab/run.sh`** for every GPU run: it allocates, clones a branch, runs one command, polls, downloads the requested path into `$TMP/colab_runs/<name>/`, and **always stops the runtime** (even on failure or Ctrl-C). Example:
+
+```bash
+scripts/colab/run.sh --gpu L4 --name t2gate --branch codex/t2-two-pass-v1 \
+  --cmd 'make -C fft2 CUDA_ARCH=sm_89 && fft2/fft2_test' --fetch results/xyz
+```
+
+Then copy the compact subset into `results/` and commit. The raw CLI, for anything the script does not cover:
+
 The official `google-colab-cli` (0.7.5) is installed in the owner's **WSL Ubuntu** on their home PC (logged in with `--auth oauth2`). From Git Bash on that machine:
 
 ```bash

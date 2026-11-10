@@ -77,8 +77,9 @@
 | ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
 | T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ 等 T1-fix-1 merge + A100 排得到 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
-| M2 / T2 | 新 API 骨架 + correctness 測試（對 cuFFT，全 N/batch）+ 單 kernel 小 N | Codex | ⏳ 待 T1 數據後撰寫 |
-| T3 | 2-pass 實作（第一版求正確，標準 radix） | Codex | ⏳ |
+| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 📝 prompt `docs/codex-tasks/T2-two-pass-v1.md`（2026-11-11 提前開工，與 T1-fix-1 平行；分解公式已用 numpy 驗證） |
+| T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend | Codex | ⏳ 等 PR #1 + T2 merge |
+| ~~T3~~ | 併入 T2 | — | ✖ |
 | T4.x | 依 ncu 數據逐項調優（每項一個 log 條目） | Codex / Claude | ⏳ |
 | T5 | batched 調優、README 瓶頸分析與 before/after | Codex / Claude | ⏳ |
 | M1 檢查點 | 與使用者討論是否追 cuFFT | 全體 | ⏳ |
@@ -90,7 +91,7 @@
 - T1 已交給 Codex（2026-11-11）。平台定為 Colab A100（§8）。
 - T0 preflight 在 Colab L4 通過：ncu counter 可用，環境為 CUDA 13.0（見 §8）。
 - GPU 執行改走 Colab CLI（§8）。PR #1（T1）已審 + 在 L4 跑 quick 全通過；修正輪 T1-fix-1 已寫好。
-- **下一步**：使用者把 `docs/codex-tasks/T1-fix-1.md` 貼給 Codex（推到同一個 PR 分支）→ Claude 複審 → merge → Claude 用 Colab CLI 開 A100 跑 T1 full。
+- **下一步**：(1) T1-fix-1 已交給 Codex（推到 PR #1 分支）→ Claude 複審 → merge → A100 跑 T1 full；(2) 平行：T2 prompt 交給 Codex（新分支 `codex/t2-two-pass-v1`，只動 `fft2/`）→ Claude 在 L4/A100 跑 `fft2_test` 驗證正確性。
 
 ## 8. 決策紀錄
 

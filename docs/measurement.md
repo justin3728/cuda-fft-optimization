@@ -90,6 +90,8 @@ total. Use `--impls legacy,cufft,vkfft` to select implementations.
 `--profile-log2` and `--profile-batch-modes` configure full-mode ncu/export
 configs, defaulting to `16,20,22,24` and `b1,t25`. Quick export follows the quick
 sweep sizes/modes, while quick profiling uses `--profile-log2` and batch one.
+Equivalent batch labels share one generated-source export per actual N/batch;
+ncu can still profile each label separately.
 `PYTHON`, `NCU` and `CUDA_ARCH` can select installed tools/architecture. Direct
 binary invocations support `--n`, explicit `--batch`, `--warmup`, `--threshold`
 and `--help` in addition to the documented shell options. For explicit-batch

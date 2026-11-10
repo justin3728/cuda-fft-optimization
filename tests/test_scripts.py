@@ -38,6 +38,15 @@ def shell_file(path, text):
     path.chmod(0o755)
 
 
+def test_equivalent_batch_modes_share_one_vkfft_export(bash):
+    result = subprocess.run([bash, "scripts/export_vkfft_kernels.sh", "--tag", "export_dry", "--dry-run",
+                             "--profile-log2", "22", "--profile-batch-modes", "b8,t25"],
+                            cwd=ROOT, text=True, capture_output=True, check=True)
+    assert result.stdout.count("--export-vkfft") == 1
+    assert "--n 4194304 --batch 8" in result.stdout
+    assert "Reusing VkFFT export" in result.stdout
+
+
 def test_failed_stages_do_not_stop_independent_stages(bash, tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()

@@ -73,9 +73,9 @@
 | ID | 任務 | 負責 | 狀態 |
 |---|---|---|---|
 | T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ✅ L4 上通過（2026-11-11）；A100 型號待首次正式執行確認 |
-| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | 🔨 已交給 Codex（2026-11-11），等 PR |
-| T1b | Colab notebook 包裝 `run_t1_all.sh`（clone/build/run/push） | Codex 或 Claude | ⏳ T1 審完後 |
-| T1-run | 在 Colab A100 跑 T1，commit `results/<tag>/` | 使用者 | ⏳ 等 T1 + T1b merge |
+| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | 🔍 PR #1 已審；L4 quick 冒煙測試 7 階段全 OK（`results/smoke_l4_20261111/`）；修正輪 `docs/codex-tasks/T1-fix-1.md` 待交給 Codex |
+| ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
+| T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ 等 T1-fix-1 merge + A100 排得到 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
 | M2 / T2 | 新 API 骨架 + correctness 測試（對 cuFFT，全 N/batch）+ 單 kernel 小 N | Codex | ⏳ 待 T1 數據後撰寫 |
 | T3 | 2-pass 實作（第一版求正確，標準 radix） | Codex | ⏳ |
@@ -89,7 +89,8 @@
 - 建立本檔、`docs/optimization-log.md`、T1 prompt。
 - T1 已交給 Codex（2026-11-11）。平台定為 Colab A100（§8）。
 - T0 preflight 在 Colab L4 通過：ncu counter 可用，環境為 CUDA 13.0（見 §8）。
-- **下一步**：Codex 開 T1 PR 後交給 Claude 審（特別檢查 CUDA 13 相容性與 `CUDA_ARCH=sm_80`）；審完後做 T1b（Colab 包裝 notebook），再排 A100 跑 T1。
+- GPU 執行改走 Colab CLI（§8）。PR #1（T1）已審 + 在 L4 跑 quick 全通過；修正輪 T1-fix-1 已寫好。
+- **下一步**：使用者把 `docs/codex-tasks/T1-fix-1.md` 貼給 Codex（推到同一個 PR 分支）→ Claude 複審 → merge → Claude 用 Colab CLI 開 A100 跑 T1 full。
 
 ## 8. 決策紀錄
 
@@ -97,8 +98,13 @@
 |---|---|---|
 | 2026-11-11 | 實作由 Codex 負責（使用者有 Codex 額度要用）；使用者貼 prompt | Claude 審 PR、分析數據 |
 | 2026-11-11 | **GPU 平台固定為 Google Colab A100**，正式數據只認 `A100-SXM4-40GB` | 與舊數據同型號。每次執行前 notebook 先 assert GPU 名稱，不符就中止、不量。曾評估 gputw.ai（只有 A100 80GB、NT$38.4/hr、當時無現貨），未採用 |
+| 2026-11-11 | **GPU 執行改走官方 Colab CLI**（`google-colab-cli` 0.7.5，裝在使用者的 WSL Ubuntu，`--auth oauth2`） | Claude 可自行 `colab new --gpu A100`、`colab upload/exec/download`、`colab stop`；使用者不必開瀏覽器或貼結果。開機前 Claude 先徵得同意；用完立即 stop。費率實測：L4 1.94 單元/hr。A100 當天兩次分配失敗（Bad Gateway / timeout），fallback L4 |
 
-### Colab 對工作流程的影響
+### Colab CLI 操作備忘
+- 0.7.5 的 `colab ssh -s S -- CMD` 不可用；改用 `colab exec -s S -f script.py`（在 kernel 裡 `subprocess.Popen` 背景執行 shell 腳本），長任務以 `/content/<name>_done` 檔案輪詢完成。
+- 程式碼在 runtime 上直接 `git clone` 公開 repo 的分支；結果 `tar` 後 `colab download` 回本機，由 Claude 挑精簡檔案 commit（完整 ncu 報告不進 repo）。
+
+### Colab 對工作流程的影響（原 notebook 方案，保留作備援）
 - 執行入口是 notebook（`notebooks/`），使用者開 notebook → Run all → 結果 push 回 GitHub（token 放 Colab Secrets，名稱 `GITHUB_TOKEN`，不寫進 notebook）。
 - Colab 磁碟是暫存的：每次跑完 **先 push `results/` 再斷線**。
 - 無法鎖頻（`nvidia-smi -lgc` 無權限屬預期），以時脈紀錄 + 多次 trial 中位數代替。

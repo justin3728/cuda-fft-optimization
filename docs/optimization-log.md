@@ -37,3 +37,25 @@
 **結果**：尚無。由 T1 量測工具驗證。
 
 **下一步**：T1（`docs/codex-tasks/T1-measurement-tooling.md`）。
+
+---
+
+## L001 — 2026-11-11 — T1 工具冒煙測試（Colab **L4**，非目標 GPU）
+
+**來源**：PR #1 @ 39d1b96，`run_t1_all.sh --quick`，`results/smoke_l4_20261111/`。L4 = Ada sm_89、GDDR6、L2 48 MB、FP64 極弱 → **只用來驗證工具，數字不作效能結論**。
+
+**工具驗證結果**：7 個階段全 OK；CUDA 13 編譯零警告；三個實作 rel L2 err ≤ 7.2e-16；VkFFT 正負號與 cuFFT 一致；NVTX 過濾抓到 legacy 5 / cuFFT 2 / VkFFT 2 個 kernel（N=2^20）。
+
+**方法學發現（影響之後所有分析）**
+- 2^20 的 16 MiB 輸出會留在 L2，kernel 結束後才寫回 DRAM → 單一 kernel 的 `dram__bytes_write` 幾乎為 0，`% of HBM copy limit` 會出現 >100%（transpose_opt 115%）。2^20 這類 working set ≤ L2 的設定，**必須以 L2 指標判斷**，DRAM 指標只適用 working set ≫ L2。→ T1-fix-1 F2。
+- copy kernel 校正：L4 上 DRAM bytes / 理想 = 1.15（WS 4 GiB），lts bytes / 理想 = 1.00。A100 需重量。
+
+**對 L000 假設的初步跡象（L4，待 A100 證實）**
+| 假設 | L4 ncu 觀察（legacy `fft_block_1024_specialized`, N=2^20） |
+|---|---|
+| H1 bank conflict | shared ld 衝突 524,288、st 衝突 1,441,792（每次呼叫）→ 有，且 store 側更嚴重（bit-reverse scatter 寫入嫌疑大） |
+| H2 occupancy | 理論 50%、實際 47.3%（78 regs × 256 threads） |
+| H3 twiddle 從 global 讀 | 首要 stall = `tex_throttle` 59%（`__ldg` 走 texture path）→ 支持 |
+| barrier | 第二大 stall `barrier` 13.5% |
+
+**下一步**：T1-fix-1 → A100 full run → 正式 T1-analysis。

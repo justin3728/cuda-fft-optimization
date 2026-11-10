@@ -1,0 +1,21 @@
+{
+ "gpu_name": "NVIDIA L4",
+ "gpu_ok": false,
+ "nvcc": "13.0",
+ "ncu_preinstalled": true,
+ "ncu_install": null,
+ "ncu_path": "/usr/local/cuda/bin/ncu",
+ "ncu_version": "Version 2025.3.1.0 (build 36398880) (public-release)",
+ "rough_hbm_copy_GBs": 231.7,
+ "ncu_rc": 0,
+ "ncu_perm_error": false,
+ "ncu_counters_ok": true,
+ "ncu_metrics_sample": {
+  "dram__bytes_read.sum": "Gbyte         2.48",
+  "dram__bytes_write.sum": "Gbyte         2.47",
+  "gpu__time_duration.sum": "ms        18.46",
+  "lts__t_bytes.sum": "Gbyte         4.30"
+ },
+ "uid": "0",
+ "host": "12\n               total        used        free      shared  buff/cache   available\nMem:              52           1          48           0           3          51\noverlay         113G   86M  113G   1% /\nPython 3.13.16"
+}

@@ -1,7 +1,7 @@
 # 專案計畫與狀態（single source of truth）
 
 > 所有狀態以本檔為準，不依賴對話記憶。每次任務開始／結束、每次 A100 數據回來都要更新「目前狀態」與「任務看板」。
-> 最後更新：2026-11-11（平台定為 Colab A100；新增 T0 preflight）
+> 最後更新：2026-11-11（T0 preflight 通過：Colab 上 ncu counter 可用，CUDA 13.0）
 
 ## 1. 目標
 
@@ -72,7 +72,7 @@
 
 | ID | 任務 | 負責 | 狀態 |
 |---|---|---|---|
-| T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ⏳ 可立即執行 |
+| T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ✅ L4 上通過（2026-11-11）；A100 型號待首次正式執行確認 |
 | M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | 🔨 已交給 Codex（2026-11-11），等 PR |
 | T1b | Colab notebook 包裝 `run_t1_all.sh`（clone/build/run/push） | Codex 或 Claude | ⏳ T1 審完後 |
 | T1-run | 在 Colab A100 跑 T1，commit `results/<tag>/` | 使用者 | ⏳ 等 T1 + T1b merge |
@@ -88,7 +88,8 @@
 - 已讀完 `fft_cuda.cu`、`fft_cuda.h`、`benchmark.cpp`、`profile_stages.cu`、`Makefile`、`results/`。
 - 建立本檔、`docs/optimization-log.md`、T1 prompt。
 - T1 已交給 Codex（2026-11-11）。平台定為 Colab A100（§8）。
-- **下一步**：(1) 使用者在 Colab A100 跑 `notebooks/colab_preflight.ipynb`，把最後一格的摘要貼回；(2) Codex 開 T1 PR 後交給 Claude 審。
+- T0 preflight 在 Colab L4 通過：ncu counter 可用，環境為 CUDA 13.0（見 §8）。
+- **下一步**：Codex 開 T1 PR 後交給 Claude 審（特別檢查 CUDA 13 相容性與 `CUDA_ARCH=sm_80`）；審完後做 T1b（Colab 包裝 notebook），再排 A100 跑 T1。
 
 ## 8. 決策紀錄
 
@@ -103,9 +104,18 @@
 - 無法鎖頻（`nvidia-smi -lgc` 無權限屬預期），以時脈紀錄 + 多次 trial 中位數代替。
 - **最大風險**：Colab 容器內 ncu 能否讀 performance counter。由 `notebooks/colab_preflight.ipynb` 驗證；若不行，核心目標（ncu 達成率）需改平台或改用 CUPTI 以外的替代量測，屆時再討論。
 
+### T0 preflight 結果（2026-11-11，Colab **L4**，A100 當時排不到；原始輸出 `results/preflight/colab_l4_2026-11-11.json`）
+- ✅ **ncu 可讀 performance counter**（`ERR_NVGPUCTRPERM` 未出現，`--clock-control none` 可用）。權限取決於 Colab 容器設定而非 GPU 型號，A100 預期相同（A100 首次正式執行時再確認一次）。
+- 環境：**CUDA 13.0**（nvcc）、ncu 2025.3.1、Python 3.13、以 root 執行、12 vCPU、52 GB RAM、113 GB 暫存磁碟。
+- CUDA 13 影響：
+  - 已不支援 sm_61 等舊架構離線編譯 → legacy `Makefile` 預設 `CUDA_ARCH=sm_61` 在 Colab 上會失敗，**一律 `make -B CUDA_ARCH=sm_80`**（不改 legacy Makefile 預設值，只在腳本中傳參數）。
+  - CUDA 13 移除了 `cudaDeviceProp` 的部分欄位（如 `clockRate`、`memoryClockRate`）→ T1 的「理論頻寬」需改用 `cudaDeviceGetAttribute` 並容許失敗，或從 `nvidia-smi` 取得。審 T1 PR 時檢查。
+  - VkFFT v1.3.4 + CUDA 13 的 NVRTC 相容性未驗證 → T1 首次執行時注意。
+- 觀察（L4，不作結論）：2 GiB copy kernel 的 ncu `dram__bytes_read/write` 各 ~2.48 GB，比理想值 2.15 GB 多 ~15%；`lts__t_bytes` 4.30 GB 則與理想值一致。推論：L4 的 GDDR6 inline ECC 等額外 DRAM 流量。→ **ncu 的 DRAM bytes 不能直接除以理想 bytes 當「趟數」，要先用 bwtest copy kernel 在同一台 GPU 上校正**（T1 已規劃 profile bwtest kernel，A100 上再確認比例）。
+
 ## 9. 開放問題 / 待使用者決定
 
 1. ~~A100 型號~~ → 已決定：Colab A100-SXM4-40GB。
-2. Colab 上 ncu 是否能讀 counter → 待 preflight 結果。
+2. ~~Colab 上 ncu 是否能讀 counter~~ → ✅ 可以（T0，L4）。A100 型號名稱與 counter 權限在第一次 A100 執行時由 notebook 再確認。
 3. batched 的定義（預設：N×batch 固定為 2^25 個元素 = 512 MiB，遠超 L2，看 HBM 行為；另加 batch=8 小批次）。可調。
 4. T1 的 `run_t1_all.sh` 需要一個 Colab notebook 包裝（clone、build、跑、push）；待 T1 PR 審完後作為 T1b 交給 Codex，或由 Claude 直接寫（檔案很小）。

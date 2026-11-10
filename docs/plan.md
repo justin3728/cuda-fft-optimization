@@ -73,7 +73,7 @@
 | ID | 任務 | 負責 | 狀態 |
 |---|---|---|---|
 | T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ✅ L4 上通過（2026-11-11）；A100 型號待首次正式執行確認 |
-| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | 🔨 已交給 Codex（2026-11-11），等 PR |
+| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | PR open |
 | T1b | Colab notebook 包裝 `run_t1_all.sh`（clone/build/run/push） | Codex 或 Claude | ⏳ T1 審完後 |
 | T1-run | 在 Colab A100 跑 T1，commit `results/<tag>/` | 使用者 | ⏳ 等 T1 + T1b merge |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |

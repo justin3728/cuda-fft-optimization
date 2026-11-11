@@ -1,7 +1,7 @@
 # 專案計畫與狀態（single source of truth）
 
 > 所有狀態以本檔為準，不依賴對話記憶。每次任務開始／結束、每次 A100 數據回來都要更新「目前狀態」與「任務看板」。
-> 最後更新：2026-11-11（T0 preflight 通過：Colab 上 ncu counter 可用，CUDA 13.0）
+> 最後更新：2026-11-11 晚（Codex 週額度重置前一次派出 T3/T2b/T4a/T4b/T5a；T1-fix-1 已由 Codex 推到 PR #1 @ dce6093，待 Claude 複審）
 
 ## 1. 目標
 
@@ -78,11 +78,14 @@
 | T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ 等 T1-fix-1 merge + A100 排得到 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
 | M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 🔍 PR #2 已審（CUDA 13.5 sm_80/sm_89 零警告編譯、pytest 193 passed）；**L4 gate 通過**（28 passed / 0 failed / 1 skip，rel L2 ≤ 6.1e-16，每次 execute 2 kernels，`results/t2_gate_l4_20261111/`）；⏳ A100 gate |
-| T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend | Codex | ⏳ 等 PR #1 + T2 merge |
-| CI | GitHub Actions：每個 PR 跑 pytest（含 `fft2/reference`）、`bash -n`/shellcheck、`run_t1_all.sh --dry-run`（全部不需 GPU） | Codex | ⏳ 排在 PR #1 merge 後（避免改到 PR #1 檔案） |
+| T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend + 變體 A/B 腳本（`docs/codex-tasks/T2b-bench-fft2-backend.md`，分支疊在 T1+T2 上） | Codex | 📤 2026-11-11 晚交給 Codex |
+| T3 CI | GitHub Actions：pytest、shellcheck、dry-run、CUDA 13 容器 compile-only（`docs/codex-tasks/T3-ci.md`；只動 `.github/`，目錄不存在時 skip） | Codex | 📤 2026-11-11 晚交給 Codex |
 | Harness | `scripts/colab/run.sh`：一次 GPU 執行的完整流程，失敗也自動 stop | Claude | ✅ 2026-11-11（CPU runtime 端到端測試） |
 | ~~T3~~ | 併入 T2 | — | ✖ |
-| T4.x | 依 ncu 數據逐項調優（每項一個 log 條目） | Codex / Claude | ⏳ |
+| T4a | fft2 變體 1：32-bit shift/mask 索引（H9）、shared padding（H10），opt-in，預設輸出不變 | Codex | 📤 2026-11-11 晚交給 Codex |
+| T4b | fft2 變體 2：register radix-8/16（H11），疊在 T4a 上 | Codex | 📤 T4a 推上去後接著做 |
+| T4.x | A100 一次 allocation A/B 所有變體 → 依 ncu 決定預設值（每項一個 log 條目） | Claude | ⏳ |
+| T5a | `make_report.sh`：從 `results/<tag>/` 自動產生瓶頸分析 Markdown（不手打數字） | Codex | 📤 2026-11-11 晚交給 Codex |
 | T5 | batched 調優、README 瓶頸分析與 before/after | Codex / Claude | ⏳ |
 | M1 檢查點 | 與使用者討論是否追 cuFFT | 全體 | ⏳ |
 
@@ -94,6 +97,7 @@
 - T0 preflight 在 Colab L4 通過：ncu counter 可用，環境為 CUDA 13.0（見 §8）。
 - GPU 執行改走 Colab CLI（§8）。PR #1（T1）已審 + 在 L4 跑 quick 全通過；修正輪 T1-fix-1 已寫好。
 - T2（PR #2）L4 gate 通過（2026-11-11，`notebooks/t2_gate.ipynb` Run all）：正確性全過、2 kernels/execute；2^24 b1 pass1 讀取 1.32 趟（校正後）＝ L4 上 C=1 退化所致。
+- **2026-11-11 晚**：GPU 是瓶頸，先把不需 GPU 的工作全部派給 Codex（T3、T2b、T4a→T4b、T5a，分支／目錄互不重疊）。下次 A100 allocation 目標：T2 gate + T1 full + T4 變體 A/B 一次跑完。
 - **下一步（更新）**：A100 跑 `notebooks/t2_gate.ipynb` → 通過即 merge PR #2；調優第一項建議 = 內層 64-bit 除法改 32-bit/shift（待 A100 ncu 證實）。
 - **下一步（舊）**：(1) T1-fix-1 已交給 Codex（推到 PR #1 分支）→ Claude 複審 → merge → A100 跑 T1 full；(2) 平行：T2 prompt 交給 Codex（新分支 `codex/t2-two-pass-v1`，只動 `fft2/`）→ Claude 在 L4/A100 跑 `fft2_test` 驗證正確性。
 

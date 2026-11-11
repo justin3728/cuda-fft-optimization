@@ -224,3 +224,41 @@ def test_extrapolated_totals_do_not_supply_gap(tmp_path):
     report = generate_report(tmp_path, "current")
     assert "sampled/extrapolated totals cannot supply a measured gap" in report
     assert "| 1048576 | 1 | b1 | legacy | hot | 604.365 | 1.16181 | 21.6587 | ok | n/a" in report
+
+
+def test_before_after_partial_overlap(tmp_path):
+    current = copy_run(tmp_path, "current")
+    baseline = copy_run(tmp_path, "before")
+    old = [row for row in read_rows(baseline / "sweep/raw.csv") if row["N"] != "16777216"]
+    new = [row for row in read_rows(current / "sweep/raw.csv") if row["N"] != "1048576"]
+    for row in old:
+        if row["impl"] == "legacy":
+            row["time_ms_median"] = str(float(row["time_ms_median"]) * 2)
+    write_rows(baseline / "sweep/raw.csv", old)
+    write_rows(current / "sweep/raw.csv", new)
+    report = generate_report(tmp_path, "current", baseline_tag="before", impls=("legacy",))
+    comparison = report.split("## Before / after")[1].split("## Missing data")[0]
+    assert "| 65536 | 1 | b1 | legacy | hot | 126.259 | 63.1296 | -63.1296 | -50 | ok | ok |" in comparison
+    assert "| 1048576 |" not in comparison
+    assert "| 16777216 |" not in comparison
+    assert "### Baseline environment: before" in comparison
+    assert "smoke test, not official numbers" in comparison
+
+
+def test_before_after_does_not_cross_variant_keys(tmp_path):
+    current = copy_run(tmp_path, "current")
+    baseline = copy_run(tmp_path, "before")
+    for target, variant in ((current, "padding"), (baseline, "radix8")):
+        rows = [dict(row, impl="fft2", impl_detail=variant) for row in read_rows(target / "sweep/raw.csv")
+                if row["impl"] == "legacy"]
+        write_rows(target / "sweep/raw.csv", rows)
+    report = generate_report(tmp_path, "current", baseline_tag="before", impls=("fft2",))
+    assert "missing shared requested sweep configurations" in report
+    assert "| -50 |" not in report
+
+
+def test_missing_baseline_is_reported(tmp_path):
+    copy_run(tmp_path)
+    report = generate_report(tmp_path, "current", baseline_tag="absent")
+    assert "results/absent/sweep/raw.csv" in report
+    assert "missing shared requested sweep configurations" in report

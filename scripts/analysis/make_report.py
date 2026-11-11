@@ -177,11 +177,11 @@ class Run:
         }
 
 
-def header(run, md, title="Measurement report"):
+def header(run, md, title="Measurement report", level=1):
     metadata = run.metadata()
     gpu = metadata["GPU"]
     official = not isinstance(gpu, Missing) and str(gpu).removeprefix("NVIDIA ") == "A100-SXM4-40GB"
-    output = f"# {title}: {md.cell(run.tag)}\n\n"
+    output = f"{'#' * level} {title}: {md.cell(run.tag)}\n\n"
     if not official:
         output += ("> [!WARNING]\n> **smoke test, not official numbers** — "
                    "GPU is not verified as A100-SXM4-40GB.\n\n")
@@ -520,11 +520,51 @@ def kernels_section(run, md, impls):
     return output
 
 
+def comparison_section(current, baseline, md, impls):
+    output = "## Before / after\n\n"
+    output += header(baseline, md, title="Baseline environment", level=3)
+    output += (f"Before: `{baseline.source(baseline.sweep_file)}`. "
+               f"After: `{current.source(current.sweep_file)}`. "
+               "Only exact shared (N, batch, batch label, impl, impl_detail, timing mode) keys "
+               "are compared. An absent impl_detail matches an empty detail. "
+               "Delta = after − before; delta (%) = 100 × delta / before. "
+               "Negative time deltas mean less elapsed time. Deltas require both statuses to be ok.\n\n")
+    fields = (*CONFIG, "impl", "timing_mode")
+    old = indexed(baseline.sweeps, fields, variants=True)
+    new = indexed(current.sweeps, fields, variants=True)
+    has_detail = any("impl_detail" in row.data for row in [*baseline.sweeps, *current.sweeps])
+    columns = ["N", "Batch", "Batch label", "Impl"] + (["impl_detail"] if has_detail else [])
+    columns += ["Timing", "Before (µs)", "After (µs)", "Delta (µs)", "Delta (%)", "Before status", "After status"]
+    rows = []
+    for identity in sorted(old.keys() & new.keys(), key=config_sort):
+        before, after = old[identity], new[identity]
+        if after.data.get("impl") not in impls:
+            continue
+        values = [after.value(field) for field in (*CONFIG, "impl")]
+        if has_detail:
+            values += [after.value("impl_detail")]
+        delta = calc(lambda now, then: (now - then) * 1000, eligible_time(after), eligible_time(before))
+        values += [after.value("timing_mode"),
+                   calc(lambda ms: ms * 1000, before.numeric("time_ms_median", positive=True)),
+                   calc(lambda ms: ms * 1000, after.numeric("time_ms_median", positive=True)),
+                   delta, calc(lambda us, ms: us / (ms * 1000) * 100, delta, eligible_time(before)),
+                   before.value("status"), after.value("status")]
+        rows.append(values)
+    if not rows:
+        reason = Missing((f"{baseline.source(baseline.sweep_file)} and {current.source(current.sweep_file)}: "
+                          "missing shared requested sweep configurations",))
+        rows = [[reason] * len(columns)]
+    return output + md.table(columns, rows)
+
+
 def generate_report(results_root, tag, *, baseline_tag=None, impls=IMPLEMENTATIONS, plots=False, out=None):
     md = Markdown()
     run = Run(results_root, tag)
-    return (header(run, md) + limits_section(run, md) + sweep_section(run, md, impls)
-            + kernels_section(run, md, impls) + md.footnotes())
+    output = (header(run, md) + limits_section(run, md) + sweep_section(run, md, impls)
+              + kernels_section(run, md, impls))
+    if baseline_tag:
+        output += comparison_section(run, Run(results_root, baseline_tag), md, impls)
+    return output + md.footnotes()
 
 
 def safe_tag(value):

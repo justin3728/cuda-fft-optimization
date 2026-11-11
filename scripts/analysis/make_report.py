@@ -89,9 +89,17 @@ class Run:
                            or not (self.root / "sweep/derived.csv").is_file() else "sweep/derived.csv")
         self.sweeps = self.rows(self.sweep_file)
         self.floors = self.rows("bandwidth/pass_floor.csv")
+        self.total_file = self.summary_file("config_totals.csv")
+        self.totals = self.rows(self.total_file)
+        self.calibration_file = self.summary_file("copy_calibration.csv")
+        self.calibrations = self.rows(self.calibration_file)
 
     def source(self, relative):
         return f"results/{self.tag}/{relative}"
+
+    def summary_file(self, name):
+        modern = f"ncu/summary/{name}"
+        return modern if (self.root / modern).is_file() else f"ncu/{name}"
 
     def text(self, relative):
         path = self.root / relative
@@ -310,10 +318,178 @@ def sweep_section(run, md, impls):
     return output + md.table(columns, rows)
 
 
+PROFILE = ("impl", *CONFIG, "cache_control")
+L2_NOTE = "DRAM bytes undercount traffic (writes deferred in L2); judge this config by L2 metrics."
+
+
+def markdown_kernels(run, relative):
+    """Read the first per-kernel table in the compact, pre-fix smoke exports."""
+    fields = None
+    rows = []
+    for line_no, line in enumerate(run.text(relative).splitlines(), 1):
+        if not line.startswith("|"):
+            if rows:
+                break
+            continue
+        values = [html.unescape(value.strip().replace(r"\|", "|"))
+                  for value in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+        if fields is None:
+            if "kernel" in values:
+                fields = values
+            continue
+        if all(re.fullmatch(r":?-+:?", value) for value in values):
+            continue
+        if len(values) != len(fields):
+            raise ValueError(f"{run.source(relative)} line {line_no}: malformed kernel table")
+        rows.append(Record(dict(zip(fields, values)), f"{run.source(relative)} line {line_no}"))
+    return rows
+
+
+@dataclass
+class Profile:
+    config: Record
+    kernels: list[Record]
+    total: Record
+
+
+def profile_key(row):
+    identity = key(row, PROFILE)
+    return (*identity, detail(row)) if identity is not None else None
+
+
+def profiles(run, impls):
+    groups = {}
+    # Prefer modern normalized CSV to Markdown; never parse a raw ncu metric CSV
+    # as a normalized summary, and never double-count sibling CSV/Markdown files.
+    seen_stems = set()
+    for directory in ("ncu/summary", "ncu"):
+        for extension in ("csv", "md"):
+            for path in sorted((run.root / directory).glob(f"*.{extension}")):
+                if path.stem in seen_stems or path.name in {"config_totals.csv", "copy_calibration.csv", "index.csv"}:
+                    continue
+                relative = path.relative_to(run.root).as_posix()
+                rows = run.rows(relative) if extension == "csv" else markdown_kernels(run, relative)
+                if not rows or "kernel" not in rows[0].data:
+                    continue
+                seen_stems.add(path.stem)
+                for row in rows:
+                    if row.data.get("impl") not in impls:
+                        continue
+                    identity = profile_key(row) or (row.source,)
+                    groups.setdefault(identity, Profile(row, [], Record({}, run.source(run.total_file))))
+                    groups[identity].kernels.append(row)
+    totals = indexed(run.totals, PROFILE, variants=True)
+    for entry in [*run.totals, *run.rows("ncu/index.csv")]:
+        if entry.data.get("impl") not in impls:
+            continue
+        identity = profile_key(entry) or (entry.source,)
+        groups.setdefault(identity, Profile(entry, [], Record({}, run.source(run.total_file))))
+    for identity, profile in groups.items():
+        profile.total = totals.get(identity, profile.total)
+        indexed(profile.kernels, ("kernel_id",))
+    return sorted(groups.values(), key=lambda profile: config_sort(
+        tuple(str(profile.config.data.get(field, "")) for field in (*CONFIG, "impl", "cache_control"))
+        + (detail(profile.config),)))
+
+
+def calibration_factor(run):
+    rows = [row for row in run.calibrations
+            if row.numeric("working_set_MiB") == 4096 and row.data.get("cache_control") == "all"]
+    if len(rows) > 1:
+        raise ValueError(f"{run.source(run.calibration_file)}: duplicate HBM copy calibration")
+    return rows[0].numeric("dram_traffic_factor", positive=True) if rows else run.missing(
+        run.calibration_file, "dram_traffic_factor for working_set_MiB=4096, cache_control=all")
+
+
+def fits_l2(run, config):
+    if "working_set_fits_l2" in config.data:
+        value = config.value("working_set_fits_l2")
+        if isinstance(value, Missing):
+            return value
+        if str(value).lower() in {"true", "1", "yes"}:
+            return True
+        if str(value).lower() in {"false", "0", "no"}:
+            return False
+        return Missing((f"{config.source}: invalid working_set_fits_l2 ({value!r})",))
+    return calc(lambda n, batch, size: 32 * n * batch <= size,
+                config.numeric("N", positive=True), config.numeric("batch", positive=True),
+                run.limits.numeric("l2_size_bytes", positive=True))
+
+
+def kernel_metrics(run, row):
+    read = row.numeric("dram_read_bytes")
+    write = row.numeric("dram_write_bytes")
+    time = row.numeric("duration_us", positive=True)
+    ideal = calc(lambda n, batch: 16 * n * batch, row.numeric("N", positive=True), row.numeric("batch", positive=True))
+    factor = calibration_factor(run)
+    mixed = row.numeric("pct_mixed_hbm_limit") if "pct_mixed_hbm_limit" in row.data else calc(
+        lambda r, w, rd, wr, us: 100 * (r / (1000 * rd) + w / (1000 * wr)) / us,
+        read, write, run.limits.numeric("hbm_read_GBs", positive=True),
+        run.limits.numeric("hbm_write_GBs", positive=True), time)
+    l2 = row.numeric("pct_l2_limit") if "pct_l2_limit" in row.data else calc(
+        lambda traffic, limit, us: 100 * traffic / (1000 * limit * us),
+        row.numeric("lts_bytes"), run.limits.numeric("l2_read_GBs_plateau", positive=True), time)
+    return {
+        "read_ratio": calc(lambda traffic, calibration, payload: traffic / calibration / payload, read, factor, ideal),
+        "write_ratio": calc(lambda traffic, calibration, payload: traffic / calibration / payload, write, factor, ideal),
+        "mixed": mixed, "l2": l2,
+    }
+
+
+def kernels_section(run, md, impls):
+    output = ("## Per-kernel profiles\n\n"
+              "NCU replay durations are distinct from sweep times. DRAM R/ideal and W/ideal "
+              "divide observed bytes by the same-GPU HBM-copy traffic factor and by "
+              "16 × N × batch bytes per direction. Percentages retain observed counter traffic, "
+              "without calibration or clipping. Older tables without the percentage columns use "
+              "100 × (R/(1000 × HBM read GB/s) + W/(1000 × HBM write GB/s)) / duration_us and "
+              "100 × L2 bytes / (1000 × L2 read plateau GB/s × duration_us). "
+              "A present but unavailable percentage remains n/a.\n\n")
+    output += md.table(["Calibration source", "HBM-copy DRAM traffic factor"],
+                       [(run.source(run.calibration_file), calibration_factor(run))])
+    items = profiles(run, impls)
+    if not items:
+        return output + md.table(["Profiles"], [[run.missing(
+            "ncu/summary/*.csv (or ncu/*_N*.md)", "per-kernel profile rows")]])
+    for profile in items:
+        config = profile.config
+        label = ", ".join(f"{field}={md.cell(config.value(field))}" for field in PROFILE)
+        if detail(config):
+            label += f", impl_detail={md.cell(config.value('impl_detail'))}"
+        output += f"### {label}\n\nSource: `{config.source}`.\n\n"
+        resident = fits_l2(run, config)
+        output += f"working_set_fits_l2: {md.cell(resident)} (two-buffer proxy: 32 × N × batch ≤ L2 size).\n\n"
+        if resident is True:
+            output += f"> **L2-resident:** {L2_NOTE}\n\n"
+        if "sampled" in config.data or "sampled" in profile.total.data:
+            capture = profile.total if "sampled" in profile.total.data else config
+            output += md.table(["Sampled", "Captured kernels", "Expected kernels", "Stored totals extrapolated"],
+                               [[capture.value(field) for field in ("sampled", "captured_kernels", "expected_kernels", "totals_extrapolated")]])
+            output += "Per-kernel values are captured values; this report never scales sampled launches.\n\n"
+        columns = ["Kernel ID", "Kernel", "Time (µs)", "DRAM read (B)", "DRAM write (B)",
+                   "DRAM R/ideal (cal.)", "DRAM W/ideal (cal.)", "L2 bytes", "pct_mixed_hbm_limit",
+                   "pct_l2_limit", "Achieved occupancy (%)", "Bank conflicts ld", "Bank conflicts st",
+                   "Stall 1", "Stall 1 (%)", "Stall 2", "Stall 2 (%)"]
+        rows = []
+        for row in profile.kernels:
+            metrics = kernel_metrics(run, row)
+            rows.append([row.value("kernel_id"), row.value("kernel"), row.numeric("duration_us", positive=True),
+                         row.numeric("dram_read_bytes"), row.numeric("dram_write_bytes"),
+                         metrics["read_ratio"], metrics["write_ratio"], row.numeric("lts_bytes"),
+                         metrics["mixed"], metrics["l2"], row.numeric("achieved_occupancy_pct"),
+                         row.numeric("shared_bank_conflicts_ld"), row.numeric("shared_bank_conflicts_st"),
+                         row.value("stall_1"), row.numeric("stall_1_pct"), row.value("stall_2"), row.numeric("stall_2_pct")])
+        if not rows:
+            rows = [[run.missing("ncu/summary/", f"kernel rows for {key(config, PROFILE)}")] * len(columns)]
+        output += md.table(columns, rows)
+    return output
+
+
 def generate_report(results_root, tag, *, baseline_tag=None, impls=IMPLEMENTATIONS, plots=False, out=None):
     md = Markdown()
     run = Run(results_root, tag)
-    return header(run, md) + limits_section(run, md) + sweep_section(run, md, impls) + md.footnotes()
+    return (header(run, md) + limits_section(run, md) + sweep_section(run, md, impls)
+            + kernels_section(run, md, impls) + md.footnotes())
 
 
 def safe_tag(value):

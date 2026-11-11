@@ -4,7 +4,7 @@ import shutil
 
 import pytest
 
-from make_report import generate_report
+from make_report import Missing, Record, Run, generate_report, kernel_metrics
 
 
 FIXTURE = Path(__file__).parent / "fixtures/report"
@@ -129,3 +129,62 @@ def test_duplicate_join_keys_are_rejected(tmp_path):
     write_rows(target / "sweep/raw.csv", rows + [rows[0]])
     with pytest.raises(ValueError, match="duplicate join key"):
         generate_report(tmp_path, "current")
+
+
+def test_old_markdown_profiles_keep_repeated_kernel_launches():
+    report = generate_report(FIXTURE, TAG)
+    assert report.count("| fft_block_1024_specialized |") == 4
+    assert report.count("| regular_fft_factor&lt;") == 4
+    assert report.count("| VkFFT_main |") == 4
+    assert "**L2-resident:** DRAM bytes undercount traffic" in report
+    assert "| 68.928 | 1.92402e+07 | 12544 |" in report
+    assert "| tex_throttle | 59.02 | barrier | 13.46 |" in report
+
+
+def test_kernel_arithmetic_and_missing_counters(tmp_path):
+    # Deliberately small CPU arithmetic/schema fixture, not GPU evidence.
+    target = tmp_path / "arithmetic"
+    write_rows(target / "ncu/summary/copy_calibration.csv", [dict(
+        working_set_MiB=4096, cache_control="all", dram_traffic_factor=2)])
+    (target / "bandwidth").mkdir()
+    (target / "bandwidth/limits.json").write_text(
+        '{"hbm_read_GBs":2,"hbm_write_GBs":4,"l2_read_GBs_plateau":8}')
+    run = Run(tmp_path, "arithmetic")
+    row = Record(dict(N=128, batch=1, duration_us=10, dram_read_bytes=2000,
+                      dram_write_bytes=4000, lts_bytes=16000), "arithmetic CSV row")
+    metrics = kernel_metrics(run, row)
+    assert metrics == {"read_ratio": 0.48828125, "write_ratio": 0.9765625, "mixed": 20, "l2": 20}
+    row.data["dram_write_bytes"] = "NA"
+    row.data["pct_l2_limit"] = "NA"
+    metrics = kernel_metrics(run, row)
+    assert isinstance(metrics["write_ratio"], Missing)
+    assert isinstance(metrics["mixed"], Missing)
+    assert isinstance(metrics["l2"], Missing)  # Do not replace explicit missing measurements.
+    row.data["dram_write_bytes"] = 0
+    assert kernel_metrics(run, row)["write_ratio"] == 0
+
+
+def test_modern_csv_preferred_over_sibling_markdown(tmp_path):
+    target = copy_run(tmp_path)
+    row = dict(impl="fft2", N=65536, batch=1, batch_mode="b1", cache_control="all", impl_detail="padding",
+               kernel_id="1:1:1:0", kernel="pass_one", duration_us="12", dram_read_bytes="0", dram_write_bytes="0",
+               lts_bytes="2097152", pct_mixed_hbm_limit="NA", pct_l2_limit="17.5", working_set_fits_l2="true",
+               achieved_occupancy_pct="42", shared_bank_conflicts_ld="0", shared_bank_conflicts_st="0",
+               stall_1="barrier", stall_1_pct="25", stall_2="long_scoreboard", stall_2_pct="20")
+    write_rows(target / "ncu/summary/fft2_profile.csv", [row])
+    (target / "ncu/summary/fft2_profile.md").write_text("| kernel |\n| --- |\n| must_not_appear |\n")
+    report = generate_report(tmp_path, "current", impls=("fft2",))
+    assert "must_not_appear" not in report
+    assert "impl_detail=padding" in report
+    assert report.count("| pass_one |") == 1
+    assert "| n/a[^missing-" in report
+    assert "missing pct_mixed_hbm_limit" in report
+    assert "| 17.5 | 42 | 0 | 0 | barrier | 25 | long_scoreboard | 20 |" in report
+
+
+def test_missing_calibration_does_not_use_stored_factor(tmp_path):
+    target = copy_run(tmp_path)
+    (target / "ncu/copy_calibration.csv").unlink()
+    report = generate_report(tmp_path, "current")
+    assert "missing dram_traffic_factor for working_set_MiB=4096" in report
+    assert "| 68.928 | 1.92402e+07 | 12544 | n/a[^missing-" in report

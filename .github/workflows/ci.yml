@@ -46,3 +46,37 @@ jobs:
           else
             echo "::notice::fft2/reference/ is absent; skipping reference tests."
           fi
+
+  shell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax and ShellCheck
+        shell: bash
+        run: |
+          scripts=()
+          if [[ -d scripts ]]; then
+            mapfile -d '' -t scripts < <(find scripts -type f -name '*.sh' -print0)
+          fi
+          if ((${#scripts[@]} == 0)); then
+            echo "::notice::No scripts/*.sh files found; skipping shell checks."
+            exit 0
+          fi
+          if ! command -v shellcheck >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends shellcheck
+          fi
+          for script in "${scripts[@]}"; do
+            bash -n "$script"
+          done
+          shellcheck --external-sources "${scripts[@]}"
+      - name: T1 full and quick dry-runs
+        shell: bash
+        run: |
+          if [[ -f scripts/run_t1_all.sh ]]; then
+            scripts/run_t1_all.sh --tag ci --dry-run
+            scripts/run_t1_all.sh --tag ci --quick --dry-run
+          else
+            echo "::notice::scripts/run_t1_all.sh is absent; skipping T1 dry-runs."
+          fi

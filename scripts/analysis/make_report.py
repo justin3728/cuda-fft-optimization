@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import sys
+from urllib.parse import quote
 
 from io_utils import number
 
@@ -557,6 +558,19 @@ def comparison_section(current, baseline, md, impls):
     return output + md.table(columns, rows)
 
 
+def plots_section(run, md, out):
+    output = "## Existing plots\n\n"
+    base = Path(out).resolve().parent if out is not None else Path.cwd()
+    paths = sorted(path for path in (run.root / "plots").rglob("*")
+                   if path.is_file() and path.suffix.lower() == ".png")
+    for path in paths:
+        relative = quote(os.path.relpath(path.resolve(), base).replace(os.sep, "/"), safe="/.")
+        output += f"![Existing measurement plot]({relative})\n\n"
+    if not paths:
+        output += md.table(["Plots"], [[run.missing("plots/*.png", "existing PNG files")]])
+    return output
+
+
 def generate_report(results_root, tag, *, baseline_tag=None, impls=IMPLEMENTATIONS, plots=False, out=None):
     md = Markdown()
     run = Run(results_root, tag)
@@ -564,6 +578,8 @@ def generate_report(results_root, tag, *, baseline_tag=None, impls=IMPLEMENTATIO
               + kernels_section(run, md, impls))
     if baseline_tag:
         output += comparison_section(run, Run(results_root, baseline_tag), md, impls)
+    if plots:
+        output += plots_section(run, md, out)
     return output + md.footnotes()
 
 

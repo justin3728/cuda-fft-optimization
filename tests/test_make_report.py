@@ -1,6 +1,9 @@
 import csv
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 
 import pytest
 
@@ -262,3 +265,48 @@ def test_missing_baseline_is_reported(tmp_path):
     report = generate_report(tmp_path, "current", baseline_tag="absent")
     assert "results/absent/sweep/raw.csv" in report
     assert "missing shared requested sweep configurations" in report
+
+
+def test_plots_are_optional_existing_relative_links(tmp_path, monkeypatch):
+    target = copy_run(tmp_path)
+    plot = target / "plots/existing plot (hot).png"
+    plot.parent.mkdir()
+    plot.write_bytes(b"\x89PNG\r\n\x1a\n")  # The reporter links the file; it does not decode/regenerate plots.
+    assert "![Existing measurement plot]" not in generate_report(tmp_path, "current")
+    report = generate_report(tmp_path, "current", plots=True, out=tmp_path / "docs/report.md")
+    assert "![Existing measurement plot](../current/plots/existing%20plot%20%28hot%29.png)" in report
+    monkeypatch.chdir(tmp_path)
+    report = generate_report(tmp_path, "current", plots=True)
+    assert "![Existing measurement plot](current/plots/existing%20plot%20%28hot%29.png)" in report
+
+
+def test_requested_plots_missing(tmp_path):
+    report = generate_report(tmp_path, "absent", plots=True)
+    assert "missing existing PNG files" in report
+
+
+def test_wrapper_from_other_directory_and_output_protection(tmp_path, bash):
+    script = Path(__file__).resolve().parents[1] / "scripts/make_report.sh"
+    output = tmp_path / "report.md"
+    command = [bash, str(script), "--tag", TAG, "--results-root", str(FIXTURE.resolve())]
+    env = dict(os.environ, PYTHON=sys.executable)
+    result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == generate_report(FIXTURE.resolve(), TAG)
+    result = subprocess.run(command + ["--out", str(output)], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert output.read_text() == generate_report(FIXTURE.resolve(), TAG)
+    result = subprocess.run(command + ["--out", str(output)], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    result = subprocess.run(command + ["--out", str(FIXTURE / "would-write-input.md")], env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "outside the input results directory" in result.stderr
+
+
+@pytest.mark.parametrize("arguments", [["--tag", "../escape"], ["--tag", "ok", "--impls", "bogus"]])
+def test_invalid_cli_arguments(tmp_path, arguments):
+    script = Path(__file__).resolve().parents[1] / "scripts/analysis/make_report.py"
+    result = subprocess.run([sys.executable, str(script), *arguments], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert not list(tmp_path.iterdir())

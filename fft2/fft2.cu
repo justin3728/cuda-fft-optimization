@@ -363,6 +363,9 @@ struct Plan::Impl {
         roots2.upload(make_table(static_cast<size_t>(n2), static_cast<size_t>(n2), 1));
         cross_low.upload(make_table(n, cross_base, 1));
         cross_high.upload(make_table(n, n / cross_base, cross_base));
+        // Pageable host-to-device copies can return after staging. Finish table
+        // setup before execute is allowed to use an unrelated nonblocking stream.
+        check_cuda(cudaStreamSynchronize(nullptr), "finish plan table initialization");
     }
 };
 

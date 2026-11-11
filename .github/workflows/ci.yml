@@ -80,3 +80,42 @@ jobs:
           else
             echo "::notice::scripts/run_t1_all.sh is absent; skipping T1 dry-runs."
           fi
+
+  notebooks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+      - name: Install notebook validator
+        run: pip install nbformat
+      - name: Validate notebook JSON, schema, and stored output size
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          import nbformat
+
+          paths = sorted(Path("notebooks").glob("*.ipynb"))
+          if not paths:
+              print("::notice::No notebooks/*.ipynb files found; skipping notebook checks.")
+          for path in paths:
+              notebook = nbformat.read(path, as_version=nbformat.NO_CONVERT)
+              nbformat.validate(notebook)
+              output_bytes = sum(
+                  len(json.dumps(cell.get("outputs", []), ensure_ascii=False).encode("utf-8"))
+                  for cell in notebook.cells
+              )
+              print(f"{path}: valid notebook; {output_bytes:,} bytes of stored outputs")
+              if output_bytes > 1_000_000:
+                  print(
+                      f"::warning file={path}::Stored outputs total {output_bytes:,} bytes "
+                      "(over 1 MB); consider clearing outputs before committing."
+                  )
+          PY

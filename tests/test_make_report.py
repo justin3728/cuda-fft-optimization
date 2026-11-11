@@ -1,4 +1,8 @@
+import csv
 from pathlib import Path
+import shutil
+
+import pytest
 
 from make_report import generate_report
 
@@ -50,3 +54,78 @@ def test_missing_limit_file(tmp_path):
     assert "| HBM read (GB/s) | n/a[^missing-" in report
     assert "results/empty/bandwidth/limits.json: missing hbm_read_GBs" in report
     assert "results/empty/bandwidth/pass_floor.csv: missing pass-floor rows" in report
+
+
+def copy_run(tmp_path, name="current"):
+    target = tmp_path / name
+    shutil.copytree(FIXTURE / TAG, target)
+    return target
+
+
+def read_rows(path):
+    with path.open(newline="") as stream:
+        return list(csv.DictReader(stream))
+
+
+def write_rows(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_sweep_uses_measured_times_and_matching_floors():
+    report = generate_report(FIXTURE, TAG, impls=("legacy", "vkfft"))
+    assert "| 65536 | 1 | b1 | legacy | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
+    assert "| 65536 | 1 | b1 | legacy | cold | 73.728 | 0.736111 | 4 | ok |" in report
+    assert "| 16777216 | 1 | b1 | legacy | hot | n/a" in report
+    assert "unsupported" in report
+    assert "impl_detail" not in report
+
+
+@pytest.mark.parametrize("with_detail", [False, True])
+def test_fft2_optional_impl_detail(tmp_path, with_detail):
+    target = copy_run(tmp_path)
+    rows = read_rows(target / "sweep/raw.csv")
+    fft2 = [dict(row, impl="fft2") for row in rows if row["impl"] == "legacy" and row["N"] == "65536"]
+    if with_detail:
+        for row in rows:
+            row["impl_detail"] = ""
+        for row in fft2:
+            row["impl_detail"] = "padding"
+        fft2 += [dict(row, impl_detail="radix8") for row in fft2]
+    write_rows(target / "sweep/raw.csv", rows + fft2)
+    report = generate_report(tmp_path, "current", impls=("fft2",))
+    if with_detail:
+        assert "| fft2 | padding | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
+        assert "| fft2 | radix8 | cold | 73.728 | 0.736111 | 4 | ok |" in report
+    else:
+        assert "impl_detail" not in report
+        assert "| fft2 | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
+
+
+def test_wrong_results_do_not_get_derived_metrics(tmp_path):
+    target = copy_run(tmp_path)
+    rows = read_rows(target / "sweep/raw.csv")
+    rows[0]["status"] = "wrong"
+    write_rows(target / "sweep/raw.csv", rows)
+    report = generate_report(tmp_path, "current")
+    assert "| legacy | hot | 63.1296 | n/a" in report
+    assert "status=wrong; derived metrics require ok" in report
+
+
+def test_missing_floor_is_not_replaced_by_derived_estimate(tmp_path):
+    target = copy_run(tmp_path)
+    (target / "bandwidth/pass_floor.csv").unlink()
+    report = generate_report(tmp_path, "current")
+    assert "| legacy | hot | 63.1296 | 0.727494 | n/a" in report
+    assert "missing inplace time_ms_median for ('65536', '1', 'b1', 'hot')" in report
+
+
+def test_duplicate_join_keys_are_rejected(tmp_path):
+    target = copy_run(tmp_path)
+    rows = read_rows(target / "sweep/raw.csv")
+    write_rows(target / "sweep/raw.csv", rows + [rows[0]])
+    with pytest.raises(ValueError, match="duplicate join key"):
+        generate_report(tmp_path, "current")

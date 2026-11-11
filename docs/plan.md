@@ -77,7 +77,7 @@
 | ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
 | T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ 等 T1-fix-1 merge + A100 排得到 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
-| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 📝 prompt `docs/codex-tasks/T2-two-pass-v1.md`（2026-11-11 提前開工，與 T1-fix-1 平行；分解公式已用 numpy 驗證） |
+| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 🔍 PR #2 已審（CUDA 13.5 sm_80/sm_89 零警告編譯、pytest 193 passed）；**L4 gate 通過**（28 passed / 0 failed / 1 skip，rel L2 ≤ 6.1e-16，每次 execute 2 kernels，`results/t2_gate_l4_20261111/`）；⏳ A100 gate |
 | T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend | Codex | ⏳ 等 PR #1 + T2 merge |
 | CI | GitHub Actions：每個 PR 跑 pytest（含 `fft2/reference`）、`bash -n`/shellcheck、`run_t1_all.sh --dry-run`（全部不需 GPU） | Codex | ⏳ 排在 PR #1 merge 後（避免改到 PR #1 檔案） |
 | Harness | `scripts/colab/run.sh`：一次 GPU 執行的完整流程，失敗也自動 stop | Claude | ✅ 2026-11-11（CPU runtime 端到端測試） |
@@ -93,7 +93,9 @@
 - T1 已交給 Codex（2026-11-11）。平台定為 Colab A100（§8）。
 - T0 preflight 在 Colab L4 通過：ncu counter 可用，環境為 CUDA 13.0（見 §8）。
 - GPU 執行改走 Colab CLI（§8）。PR #1（T1）已審 + 在 L4 跑 quick 全通過；修正輪 T1-fix-1 已寫好。
-- **下一步**：(1) T1-fix-1 已交給 Codex（推到 PR #1 分支）→ Claude 複審 → merge → A100 跑 T1 full；(2) 平行：T2 prompt 交給 Codex（新分支 `codex/t2-two-pass-v1`，只動 `fft2/`）→ Claude 在 L4/A100 跑 `fft2_test` 驗證正確性。
+- T2（PR #2）L4 gate 通過（2026-11-11，`notebooks/t2_gate.ipynb` Run all）：正確性全過、2 kernels/execute；2^24 b1 pass1 讀取 1.32 趟（校正後）＝ L4 上 C=1 退化所致。
+- **下一步（更新）**：A100 跑 `notebooks/t2_gate.ipynb` → 通過即 merge PR #2；調優第一項建議 = 內層 64-bit 除法改 32-bit/shift（待 A100 ncu 證實）。
+- **下一步（舊）**：(1) T1-fix-1 已交給 Codex（推到 PR #1 分支）→ Claude 複審 → merge → A100 跑 T1 full；(2) 平行：T2 prompt 交給 Codex（新分支 `codex/t2-two-pass-v1`，只動 `fft2/`）→ Claude 在 L4/A100 跑 `fft2_test` 驗證正確性。
 
 ## 8. 決策紀錄
 

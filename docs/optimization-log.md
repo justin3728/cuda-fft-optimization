@@ -59,3 +59,20 @@
 | barrier | 第二大 stall `barrier` 13.5% |
 
 **下一步**：T1-fix-1 → A100 full run → 正式 T1-analysis。
+
+---
+
+## L002 — 2026-11-11 — T2 2-pass v1 正確性 gate（Colab **L4**，非目標 GPU）（**草稿，待使用者審閱**）
+
+**來源**：PR #2 @ 87597e8，`notebooks/t2_gate.ipynb`，`results/t2_gate_l4_20261111/summary.md`。
+
+**結果**
+- 正確性：28 passed / 0 failed / 1 skip（2^24 b8，記憶體上限），out-of-place 與 in-place 對 cuFFT rel L2 4.5e-16–6.1e-16（gate 1e-12）。
+- 結構：ncu 確認每次 `execute()` 恰 2 個 kernel（2^24 b1、2^22 b8）。
+- 流量（除以 L4 校正 1.15）：除了 2^24 b1 pass 1 讀取 ≈1.32 趟，其餘 ≈1.0 趟 → 「2 趟」結構成立。
+
+**解讀（假設，待 A100 證實）**
+- H7：2^24 b1 pass 1 多出的 ~0.3 趟讀取來自 L4 的 C=1 退化（每列只取 16 B，32 B sector 一半浪費，鄰 column 的 block 未必在 L2 命中）。A100 該設定 C=2，預期消失。2^22 b8（L4 C=2）讀取 1.16x 支持此點。
+- H8：L4 上只達 copy 上限的 41–47%（100–113 / 243 GB/s）。可能原因：L4 FP64 極弱、內層 64-bit 整數除法、A100 上的低 occupancy（每 block 128 KiB shared → 1 block/SM）。L4 數字不作結論。
+
+**下一步**：A100 跑同一個 notebook；通過 → merge PR #2 → 依 ncu 排調優（候選第一項：block_fft/載入迴圈的 64-bit `/`、`%` 改 32-bit shift）。

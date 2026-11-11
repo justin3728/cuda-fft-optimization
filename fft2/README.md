@@ -87,7 +87,7 @@ Local T4a CPU validation on 2026-11-11 (NumPy 2.3.5, pytest 9.2.0):
 
 ```text
 make -C fft2 test-cpu
-585 passed, 8 skipped in 25.15s
+585 passed, 8 skipped in 25.90s
 ```
 
 The eight opt-in slow tests were not rerun for T4a. The new tests exercise

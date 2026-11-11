@@ -180,7 +180,7 @@ def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 10
     output = np.empty_like(data)
 
     for batch_index in range(batch):  # CUDA encodes this in grid.y/grid.z.
-        base = batch_index * n
+        base = np.uint64(batch_index * n) if index_mode == 1 else batch_index * n
         for first_col in range(0, n2, cols):
             # Pass 1 flat = element * C + lane: adjacent columns per row.
             element, lane = split_index(np.arange(n1 * cols), cols, index_mode)

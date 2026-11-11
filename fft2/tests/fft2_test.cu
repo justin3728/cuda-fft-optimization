@@ -73,7 +73,7 @@ Error compare(const cuDoubleComplex* actual, const std::vector<cuDoubleComplex>&
     std::vector<cuDoubleComplex> chunk(std::min(expected.size(), kMiB));
     long double error_squared = 0.0L;
     long double reference_squared = 0.0L;
-    double maximum = 0.0;
+    long double maximum_squared = 0.0L;
     for (size_t first = 0; first < expected.size(); first += chunk.size()) {
         const size_t count = std::min(chunk.size(), expected.size() - first);
         check_cuda(cudaMemcpyAsync(chunk.data(), actual + first, count * sizeof(cuDoubleComplex),
@@ -88,15 +88,16 @@ Error compare(const cuDoubleComplex* actual, const std::vector<cuDoubleComplex>&
             }
             const long double dx = static_cast<long double>(value.x) - reference.x;
             const long double dy = static_cast<long double>(value.y) - reference.y;
-            error_squared += dx * dx + dy * dy;
+            const long double difference_squared = dx * dx + dy * dy;
+            error_squared += difference_squared;
             reference_squared += static_cast<long double>(reference.x) * reference.x
                                  + static_cast<long double>(reference.y) * reference.y;
-            maximum = std::max(maximum, static_cast<double>(std::sqrt(dx * dx + dy * dy)));
+            maximum_squared = std::max(maximum_squared, difference_squared);
         }
     }
     const long double relative = reference_squared == 0.0L ? std::sqrt(error_squared)
                                                                           : std::sqrt(error_squared / reference_squared);
-    return {relative, maximum};
+    return {relative, static_cast<double>(std::sqrt(maximum_squared))};
 }
 
 enum class Outcome { passed, failed, skipped };
@@ -391,7 +392,8 @@ int main(int argc, char** argv) {
         }
         std::cout << "SUMMARY passed=" << summary.total.passed << " failed=" << summary.total.failed
                   << " skipped=" << summary.total.skipped
-                  << " api=" << (api_ok ? "PASS" : "FAIL") << '\n';
+                  << " api=" << (api_ok ? "PASS" : "FAIL")
+                  << " axes=" << (all_axes_executed ? "PASS" : "FAIL") << '\n';
         return summary.total.failed == 0 && all_axes_executed && api_ok ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << "FAIL error=" << error.what() << '\n';

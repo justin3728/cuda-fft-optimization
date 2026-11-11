@@ -132,7 +132,7 @@ class Run:
         index = self.rows("ncu/index.csv")
         commands = self.text("ncu/commands.txt")
 
-        def find(field, pattern, *, text=env, alternatives=()):
+        def find(field, pattern, *, text=env, alternatives=(), relative="env.txt"):
             match = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
             if match and match.group(1).strip().lower() not in ABSENT:
                 return match.group(1).strip()
@@ -140,18 +140,17 @@ class Run:
                 value = self.limits.value(name)
                 if not isinstance(value, Missing):
                     return value
-            return Missing((f"{self.source('env.txt')}: missing {field}; "
+            return Missing((f"{self.source(relative)}: missing {field}; "
                             f"{self.limits.source}: missing {field}",))
 
         def settings(column, option):
-            values = {str(row.data[column]) for row in index
-                      if row.data.get(column, "").strip().lower() not in ABSENT}
+            values = {str(row.value(column)) for row in index if not isinstance(row.value(column), Missing)}
             values.update(re.findall(rf"--{option}(?:=|\s+)([\w.-]+)", commands))
             return ", ".join(sorted(values)) if values else Missing((
                 f"{self.source('ncu/index.csv')}:{column} and "
                 f"{self.source('ncu/commands.txt')}:--{option} missing",))
 
-        clock_block = re.search(r"^(\s*)Clocks\s*\n((?:(?:[ \t]+[^\n]*)?\n)*)", env, re.MULTILINE)
+        clock_block = re.search(r"^([ \t]*)Clocks[ \t]*\n((?:(?:[ \t]+[^\n]*)?\n)*)", env, re.MULTILINE)
         clocks = {}
         if clock_block:
             indent = len(clock_block.group(1))
@@ -163,16 +162,16 @@ class Run:
                     clocks[match.group(1).lower()] = match.group(2).strip()
         version = self.text("ncu/version.txt")
         ncu = find("ncu_version", r"^\s*(?:Nsight Compute(?: CLI)?(?: version)?|Version)\s*[: ]\s*([\d.]+)",
-                   text=version or env)
+                   text=version or env, relative="ncu/version.txt" if version else "env.txt")
         return {
             "GPU": find("gpu_name", r"^\s*(?:Product Name|GPU name)\s*:\s*(.+)", alternatives=("gpu", "device_name")),
             "Driver": find("driver_version", r"^\s*Driver Version\s*:\s*(.+)"),
             "CUDA toolkit": find("cuda_version", r"Cuda compilation tools, release\s+([\d.]+)"),
             "Nsight Compute": ncu,
             "Date captured": find("date", r"^(\d{4}-\d\d-\d\dT\S+)", alternatives=("timestamp",)),
-            "Current SM clock": clocks.get("sm", self.missing("env.txt", "Clocks/SM")),
-            "Current graphics clock": clocks.get("graphics", self.missing("env.txt", "Clocks/Graphics")),
-            "Current memory clock": clocks.get("memory", self.missing("env.txt", "Clocks/Memory")),
+            "Current SM clock": Record({"Clocks/SM": clocks.get("sm")}, self.source("env.txt")).value("Clocks/SM"),
+            "Current graphics clock": Record({"Clocks/Graphics": clocks.get("graphics")}, self.source("env.txt")).value("Clocks/Graphics"),
+            "Current memory clock": Record({"Clocks/Memory": clocks.get("memory")}, self.source("env.txt")).value("Clocks/Memory"),
             "ncu cache control": settings("cache_control", "cache-control"),
             "ncu clock control": settings("clock_control", "clock-control"),
         }
@@ -265,7 +264,8 @@ def sweep_entries(run, impls):
                     output.append(rows.get(identity, absent))
     # Incomplete identities remain visible; they cannot join another missing key.
     output += [row for row in run.sweeps
-               if key(row, CONFIG) is None and row.data.get("impl") in impls]
+               if key(row, (*CONFIG, "impl", "timing_mode")) is None
+               and (row.data.get("impl") in impls or isinstance(row.value("impl"), Missing))]
     return output
 
 
@@ -339,7 +339,7 @@ def markdown_kernels(run, relative):
     rows = []
     for line_no, line in enumerate(run.text(relative).splitlines(), 1):
         if not line.startswith("|"):
-            if rows:
+            if fields is not None:
                 break
             continue
         values = [html.unescape(value.strip().replace(r"\|", "|"))
@@ -380,11 +380,11 @@ def profiles(run, impls):
                     continue
                 relative = path.relative_to(run.root).as_posix()
                 rows = run.rows(relative) if extension == "csv" else markdown_kernels(run, relative)
-                if not rows or "kernel" not in rows[0].data:
+                if not rows or not ({"kernel", "kernel_id"} & rows[0].data.keys()):
                     continue
                 seen_stems.add(path.stem)
                 for row in rows:
-                    if row.data.get("impl") not in impls:
+                    if row.data.get("impl") not in impls and not isinstance(row.value("impl"), Missing):
                         continue
                     identity = profile_key(row) or (row.source,)
                     groups.setdefault(identity, Profile(row, [], Record({}, run.source(run.total_file))))
@@ -497,8 +497,10 @@ def kernels_section(run, md, impls):
         output += f"working_set_fits_l2: {md.cell(resident)} (two-buffer proxy: 32 × N × batch ≤ L2 size).\n\n"
         if resident is True:
             output += f"> **L2-resident:** {L2_NOTE}\n\n"
-        if "sampled" in config.data or "sampled" in profile.total.data:
-            capture = profile.total if "sampled" in profile.total.data else config
+        if any(field in record.data for record in (config, profile.total)
+               for field in ("sampled", "totals_extrapolated")):
+            capture = profile.total if any(field in profile.total.data
+                                           for field in ("sampled", "totals_extrapolated")) else config
             output += md.table(["Sampled", "Captured kernels", "Expected kernels", "Stored totals extrapolated"],
                                [[capture.value(field) for field in ("sampled", "captured_kernels", "expected_kernels", "totals_extrapolated")]])
             output += "Per-kernel values are captured values; this report never scales sampled launches.\n\n"

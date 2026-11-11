@@ -310,3 +310,45 @@ def test_invalid_cli_arguments(tmp_path, arguments):
     result = subprocess.run([sys.executable, str(script), *arguments], capture_output=True, text=True)
     assert result.returncode != 0
     assert not list(tmp_path.iterdir())
+
+
+def test_golden_report():
+    assert generate_report(FIXTURE, TAG) == (FIXTURE / "golden.md").read_text(encoding="utf-8")
+
+
+def test_missing_sweep_column_remains_visible(tmp_path):
+    target = copy_run(tmp_path)
+    rows = read_rows(target / "sweep/raw.csv")
+    for row in rows:
+        row.pop("timing_mode")
+    write_rows(target / "sweep/raw.csv", rows)
+    report = generate_report(tmp_path, "current", impls=("legacy",))
+    assert "missing timing_mode" in report
+    assert "| legacy | n/a[^missing-" in report
+    assert "63.1296" in report
+
+
+def test_sampling_is_shown_without_scaling_kernels(tmp_path):
+    target = copy_run(tmp_path)
+    row = dict(impl="fft2", N=65536, batch=1, batch_mode="b1", cache_control="all", kernel_id="launch0",
+               kernel="sampled_pass", duration_us=12, sampled="true", captured_kernels=1,
+               expected_kernels=2, totals_extrapolated="true")
+    write_rows(target / "ncu/summary/fft2_sample.csv", [row])
+    report = generate_report(tmp_path, "current", impls=("fft2",))
+    assert "| true | 1 | 2 | true |" in report
+    assert "| sampled_pass | 12 |" in report
+
+
+def test_unavailable_clock_and_truncated_index(tmp_path):
+    target = tmp_path / "metadata"
+    (target / "ncu").mkdir(parents=True)
+    (target / "env.txt").write_text("\n\n    Clocks\n        SM : N/A\n        Memory : 5000 MHz\n")
+    (target / "ncu/index.csv").write_text("cache_control,clock_control\nall\n")
+    (target / "ncu/version.txt").write_text("NVIDIA Nsight Compute Command Line Profiler\nVersion 2025.3.1.0\n")
+    report = generate_report(tmp_path, "metadata")
+    assert "| Current SM clock | n/a[^missing-" in report
+    assert "results/metadata/env.txt: missing Clocks/SM" in report
+    assert "| Current memory clock | 5000 MHz |" in report
+    assert "| ncu cache control | all |" in report
+    assert "| ncu clock control | n/a[^missing-" in report
+    assert "| Nsight Compute | 2025.3.1.0 |" in report

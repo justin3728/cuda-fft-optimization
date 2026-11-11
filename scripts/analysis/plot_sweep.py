@@ -11,15 +11,30 @@ import matplotlib.pyplot as plt
 from io_utils import md_table, positive, read_csv
 
 # Okabe-Ito palette. Backend colors are stable across every figure.
-COLORS = {"legacy": "#D55E00", "cufft": "#0072B2", "vkfft": "#009E73"}
-EXTRA_COLORS = ["#CC79A7", "#E69F00", "#56B4E9", "#000000"]
+COLORS = {"legacy": "#D55E00", "cufft": "#0072B2", "vkfft": "#009E73", "fft2": "#CC79A7"}
+EXTRA_COLORS = ["#E69F00", "#56B4E9", "#000000"]
+MARKERS = ["o", "s", "^", "v", "D", "P", "X"]
+LINESTYLES = ["-", "--", "-.", ":"]
+
+
+def series_styles(rows: list[dict]) -> dict[str, dict]:
+    implementations = sorted({r["impl"] for r in rows})
+    families = sorted({impl.split("[", 1)[0] for impl in implementations})
+    colors = dict(COLORS)
+    for i, family in enumerate(f for f in families if f not in colors):
+        colors[family] = EXTRA_COLORS[i % len(EXTRA_COLORS)]
+    styles = {}
+    for family in families:
+        for i, impl in enumerate(name for name in implementations if name.split("[", 1)[0] == family):
+            styles[impl] = {"color": colors[family], "marker": MARKERS[i % len(MARKERS)],
+                            "linestyle": LINESTYLES[(i // len(MARKERS)) % len(LINESTYLES)]}
+    return styles
 
 
 def plot(rows: list[dict], output_dir: Path, summary: Path) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    colors = dict(COLORS)
-    for i, impl in enumerate(sorted({r["impl"] for r in rows} - colors.keys())):
-        colors[impl] = EXTRA_COLORS[i % len(EXTRA_COLORS)]
+    rows = [{"impl_detail": "", **row} for row in rows]
+    styles = series_styles(rows)
     paths = []
     text = ["# FFT measurement summary\n",
             "Times and floors come from this run. Plots include only rows with status=ok. "
@@ -28,7 +43,7 @@ def plot(rows: list[dict], output_dir: Path, summary: Path) -> list[Path]:
         subset = sorted([r for r in rows if (r["batch_mode"], r["timing_mode"]) == (batch_mode, timing)],
                         key=lambda r: (int(r["N"]), r["impl"]))
         text.append(f"## {batch_mode}, {timing}\n")
-        text.append(md_table(subset, ["impl", "N", "batch", "time_ms_median", "t_pass_ms", "pass_equiv",
+        text.append(md_table(subset, ["impl", "impl_detail", "N", "batch", "time_ms_median", "t_pass_ms", "pass_equiv",
                                       "pct_of_cufft", "rel_l2_err", "max_abs_err", "status", "note"]))
         for metric, label, suffix in [("time_ms_median", "Time (ms)", "time"),
                                       ("pass_equiv", "Time / measured in-place pass floor", "passes"),
@@ -41,7 +56,7 @@ def plot(rows: list[dict], output_dir: Path, summary: Path) -> list[Path]:
                 series = [r for r in subset if r["impl"] == impl and r["status"] == "ok" and positive(r.get(metric)) is not None]
                 if series:
                     ax.plot([int(r["N"]) for r in series], [float(r[metric]) for r in series],
-                            marker="o", color=colors[impl], label=impl)
+                            **styles[impl], label=impl)
             if metric == "time_ms_median":
                 floors = {}
                 for row in subset:

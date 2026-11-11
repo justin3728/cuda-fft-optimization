@@ -8,7 +8,7 @@ capture_budget=0
 if ((dry_run == 0)); then
     mkdir -p "$out/ncu"
     t1_require_new "$out/ncu/index.csv"
-    printf 'impl,N,batch,batch_mode,cache_control,raw_csv,status,captured_kernels,expected_kernels,sampled,capture_limit,kernels_per_batch\n' > "$out/ncu/index.csv"
+    printf 'impl,N,batch,batch_mode,cache_control,raw_csv,status,captured_kernels,expected_kernels,sampled,capture_limit,kernels_per_batch,impl_detail\n' > "$out/ncu/index.csv"
     t1_print "$NCU" --version > "$out/ncu/commands.txt"
     "$NCU" --version > "$out/ncu/version.txt" 2>&1 || { cat "$out/ncu/version.txt"; exit 1; }
 fi
@@ -31,7 +31,7 @@ fi
 capture() {
     local impl=$1 n=$2 batch=$3 mode=$4 cache=$5 id=$6 filter=$7
     shift 7
-    local base="$out/ncu/$id" status=ok code=0
+    local base="$out/ncu/$id" status=ok code=0 impl_detail=''
     local captured=NA expected=NA sampled=auto capture_limit=$ncu_library_max_kernels kernels_per_batch=NA
     if [[ $impl == legacy ]]; then
         kernels_per_batch=5
@@ -42,6 +42,8 @@ capture() {
         ((capture_limit <= expected)) || capture_limit=$expected
         sampled=false
         ((capture_limit == expected)) || sampled=true
+    elif [[ $impl == fft2* ]]; then
+        expected=2; capture_limit=2; sampled=false
     elif [[ $impl == bwcopy ]]; then
         expected=1; capture_limit=1; sampled=false
     fi
@@ -57,8 +59,8 @@ capture() {
     t1_print "${command[@]}" >> "$out/ncu/commands.txt"
     if "${command[@]}" > "$base.capture.log" 2>&1; then code=0; else code=$?; fi
     if grep -q 'ERR_NVGPUCTRPERM' "$base.capture.log"; then
-        printf '%s,%s,%s,%s,%s,%s,permission_error,%s,%s,%s,%s,%s\n' "$impl" "$n" "$batch" "$mode" "$cache" "$id.csv" \
-            "$captured" "$expected" "$sampled" "$capture_limit" "$kernels_per_batch" >> "$out/ncu/index.csv"
+        t1_csv_row "$impl" "$n" "$batch" "$mode" "$cache" "$id.csv" permission_error \
+            "$captured" "$expected" "$sampled" "$capture_limit" "$kernels_per_batch" "$impl_detail" >> "$out/ncu/index.csv"
         cat "$base.capture.log" >&2
         echo 'ERR_NVGPUCTRPERM: GPU counters are restricted by the host driver.' >&2
         echo "Ask the host admin to run the recorded ncu command with sudo -E (use the absolute ncu/binary paths). Exact commands: $out/ncu/commands.txt" >&2
@@ -84,6 +86,11 @@ capture() {
                 status=error; failed=1
                 echo "Legacy capture was not the requested complete-batch prefix: captured=$captured limit=$capture_limit kernels_per_batch=$kernels_per_batch" >&2
             fi
+        elif [[ $impl == fft2* ]]; then
+            if ! "$PYTHON" scripts/analysis/ncu_summary.py --check-fft2-capture "$base.csv"; then
+                status=error; failed=1
+                echo "Expected exactly fft2 pass1_columns and pass2_rows; captured=$captured" >&2
+            fi
         elif [[ $impl == bwcopy ]]; then
             if ((captured != 1)); then
                 status=error; failed=1
@@ -96,8 +103,9 @@ capture() {
             expected=$captured; sampled=false
         fi
     fi
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$impl" "$n" "$batch" "$mode" "$cache" "$id.csv" "$status" \
-        "$captured" "$expected" "$sampled" "$capture_limit" "$kernels_per_batch" >> "$out/ncu/index.csv"
+    impl_detail=$(sed -n 's/^impl_detail=//p' "$base.capture.log" | tail -n 1)
+    t1_csv_row "$impl" "$n" "$batch" "$mode" "$cache" "$id.csv" "$status" \
+        "$captured" "$expected" "$sampled" "$capture_limit" "$kernels_per_batch" "$impl_detail" >> "$out/ncu/index.csv"
 }
 
 IFS=',' read -r -a implementations <<< "$impls"
@@ -108,17 +116,20 @@ while read -r exponent; do
     for mode in "${modes[@]}"; do
         batch=$(t1_batch "$n" "$mode")
         for impl in "${implementations[@]}"; do
-            id="${impl}_N${n}_b${batch}_${mode}_cache_all"
-            if [[ $impl == legacy ]] && ((n > 1048576)); then
-                echo "unsupported: legacy N=$n exceeds 2^20"
-                if ((dry_run == 0)); then printf '%s,%s,%s,%s,all,%s,unsupported,0,0,false,0,NA\n' "$impl" "$n" "$batch" "$mode" "$id.csv" >> "$out/ncu/index.csv"; fi
+            label=$impl
+            [[ $impl != fft2 ]] || label=$(t1_fft2_name)
+            id="${label}_N${n}_b${batch}_${mode}"
+            if { [[ $impl == legacy ]] && ((n > 1048576)); } ||
+               { [[ $impl == fft2 ]] && ((exponent < 16 || exponent > 24)); }; then
+                echo "unsupported: $impl N=$n outside its supported range"
+                if ((dry_run == 0)); then t1_csv_row "$label" "$n" "$batch" "$mode" all "${id}_cache_all.csv" unsupported 0 0 false 0 NA '' >> "$out/ncu/index.csv"; fi
                 continue
             fi
-            capture "$impl" "$n" "$batch" "$mode" all "$id" "prof\\/${impl}\\/N${n}\\/b${batch}/" \
-                "$bench_bin" --tag "$tag" --profile --impls "$impl" --n "$n" --batch "$batch" --batch-modes "$mode"
+            filter=$(t1_nvtx_filter "prof/$label/N$n/b$batch")
+            profile_args=("$bench_bin" --tag "$tag" --profile --impls "$impl" --n "$n" --batch "$batch" --batch-modes "$mode" "${fft2_args[@]}")
+            capture "$label" "$n" "$batch" "$mode" all "${id}_cache_all" "$filter" "${profile_args[@]}"
             if ((n == 1048576 && batch == 1)); then
-                capture "$impl" "$n" "$batch" "$mode" none "${impl}_N${n}_b${batch}_${mode}_cache_none" "prof\\/${impl}\\/N${n}\\/b${batch}/" \
-                    "$bench_bin" --tag "$tag" --profile --impls "$impl" --n "$n" --batch "$batch" --batch-modes "$mode"
+                capture "$label" "$n" "$batch" "$mode" none "${id}_cache_none" "$filter" "${profile_args[@]}"
             fi
         done
     done

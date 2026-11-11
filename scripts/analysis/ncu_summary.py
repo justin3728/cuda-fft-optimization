@@ -28,7 +28,7 @@ METRICS = {
     "fp64_pipe_util_pct": ["sm__pipe_fp64_cycles_active.avg.pct_of_peak_sustained_active"],
 }
 EXTRA_METRICS = ["launch__grid_size", "launch__block_size", "lts__t_sectors.sum"]
-FIELDS = ["impl", "N", "batch", "batch_mode", "cache_control", "kernel_id", "kernel", "grid", "block",
+FIELDS = ["impl", "impl_detail", "N", "batch", "batch_mode", "cache_control", "kernel_id", "kernel", "grid", "block",
           "registers_per_thread", "static_smem_bytes", "dynamic_smem_bytes", "smem_bytes", "duration_us",
           "pct_config_time", "dram_read_bytes", "dram_write_bytes", "lts_bytes", "dram_GBs",
           "pct_measured_hbm_copy", "l2_GBs", "pct_measured_l2_copy", "theoretical_occupancy_pct",
@@ -36,7 +36,7 @@ FIELDS = ["impl", "N", "batch", "batch_mode", "cache_control", "kernel_id", "ker
           "stall_1", "stall_1_pct", "stall_2", "stall_2_pct", "stall_3", "stall_3_pct",
           "pct_mixed_hbm_limit", "pct_l2_limit", "l2_limit_method", "working_set_fits_l2",
           "sampled", "captured_kernels", "expected_kernels", "sampling_ratio", "extrapolation_factor"]
-TOTAL_FIELDS = ["impl", "N", "batch", "batch_mode", "cache_control", "kernel_count", "total_time_us",
+TOTAL_FIELDS = ["impl", "impl_detail", "N", "batch", "batch_mode", "cache_control", "kernel_count", "total_time_us",
                 "total_dram_bytes", "effective_memory_passes", "dram_copy_traffic_factor", "calibrated_memory_passes",
                 "working_set_fits_l2", "sampled", "captured_kernels", "expected_kernels", "sampling_ratio",
                 "extrapolation_factor", "totals_extrapolated", "captured_time_us", "captured_dram_bytes",
@@ -172,6 +172,8 @@ def sampling_metadata(config: dict, captured: int) -> dict:
     if expected < captured:
         raise ValueError("expected_kernels cannot be smaller than captured_kernels")
     sampled = captured < expected
+    if config.get("impl", "").split("[", 1)[0] == "fft2" and (captured != 2 or expected != 2):
+        raise ValueError("fft2 requires a complete capture of exactly two kernels; sampling is not supported")
     if declared_sampled is not None and declared_sampled != sampled:
         raise ValueError("sampled flag disagrees with captured/expected kernel counts")
     limit = count("capture_limit")
@@ -187,12 +189,23 @@ def sampling_metadata(config: dict, captured: int) -> dict:
             "sampling_ratio": captured / expected, "extrapolation_factor": expected / captured}
 
 
+def validate_fft2_capture(kernels: list[Kernel]) -> None:
+    names = [re.search(r"\b(pass1_columns|pass2_rows)(?:\(|$)", kernel.name) for kernel in kernels]
+    if [match.group(1) if match else None for match in names] != ["pass1_columns", "pass2_rows"]:
+        raise ValueError("fft2 capture must contain exactly pass1_columns then pass2_rows")
+
+
 def summarize(kernels: list[Kernel], config: dict, limits: dict) -> tuple[list[dict], dict]:
+    config = {"impl_detail": "", **config}
+    is_fft2 = config.get("impl", "").split("[", 1)[0] == "fft2"
+    if is_fft2:
+        validate_fft2_capture(kernels)
     rows = []
     sampling = sampling_metadata(config, len(kernels))
     n, batch = int(config.get("N", 0)), int(config.get("batch", 0))
     l2_size = positive(limits.get("l2_size_bytes"))
-    fits_l2 = 32 * n * batch <= l2_size if n > 0 and batch > 0 and l2_size is not None else None
+    buffer_count = 3 if is_fft2 and ",oop=1]" in config["impl"] else 2
+    fits_l2 = buffer_count * 16 * n * batch <= l2_size if n > 0 and batch > 0 and l2_size is not None else None
     hbm, l2 = positive(limits.get("hbm_copy_GBs")), positive(limits.get("l2_copy_GBs_plateau"))
     if hbm is None or l2 is None:
         warnings.warn("measured HBM/L2 copy limit missing or nonpositive; affected percentages are NA", stacklevel=2)
@@ -339,6 +352,7 @@ def run(root: Path) -> None:
             continue
         raw_path = root / "ncu" / entry["raw_csv"]
         config = {key: entry[key] for key in ["impl", "N", "batch", "batch_mode", "cache_control"]}
+        config["impl_detail"] = entry.get("impl_detail", "")
         for key in ("captured_kernels", "expected_kernels", "sampled", "capture_limit", "kernels_per_batch"):
             if key in entry:
                 config[key] = entry[key]
@@ -399,8 +413,11 @@ def main(argv=None) -> None:
     parser.add_argument("--metrics-out", type=Path)
     parser.add_argument("--retain-reports", action="store_true")
     parser.add_argument("--count-kernels", type=Path, help="print only the number of distinct launches in a raw CSV")
+    parser.add_argument("--check-fft2-capture", type=Path, help="require exactly the two fft2 passes in order")
     args = parser.parse_args(argv)
-    if args.count_kernels:
+    if args.check_fft2_capture:
+        validate_fft2_capture(parse_raw(args.check_fft2_capture))
+    elif args.count_kernels:
         print(len(parse_raw(args.count_kernels)))
     elif args.query_file:
         if not args.metrics_out:

@@ -4,7 +4,8 @@ set -euo pipefail
 T1_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$T1_ROOT"
 tag='' quick=0 dry_run=0 skip_ncu=0 verify_fftw=0
-log2='' batch_modes='' impls='legacy,cufft,vkfft' trials='' iters=20
+log2='' batch_modes='' impls='legacy,cufft,vkfft,fft2' trials='' iters=20
+fft2_n1=0 fft2_tile_cols=0 fft2_tile_rows=0 fft2_out_of_place=0
 profile_log2='' profile_batch_modes='b1,t25'
 ncu_max_kernels=50 ncu_library_max_kernels=12
 PYTHON=${PYTHON:-python3}
@@ -13,11 +14,12 @@ NCU=${NCU:-ncu}
 t1_parse() {
     while (($#)); do
         case $1 in
-            --tag|--log2|--batch-modes|--impls|--trials|--iters|--profile-log2|--profile-batch-modes|--ncu-max-kernels|--ncu-library-max-kernels)
+            --tag|--log2|--batch-modes|--impl|--impls|--trials|--iters|--profile-log2|--profile-batch-modes|--ncu-max-kernels|--ncu-library-max-kernels|--fft2-n1|--fft2-tile-cols|--fft2-tile-rows)
                 (($# >= 2)) || { echo "Missing value for $1" >&2; exit 2; }
                 case $1 in
                     --tag) tag=$2;; --log2) log2=$2;; --batch-modes) batch_modes=$2;;
-                    --impls) impls=$2;; --trials) trials=$2;; --iters) iters=$2;;
+                    --impl|--impls) impls=$2;; --trials) trials=$2;; --iters) iters=$2;;
+                    --fft2-n1) fft2_n1=$2;; --fft2-tile-cols) fft2_tile_cols=$2;; --fft2-tile-rows) fft2_tile_rows=$2;;
                     --profile-log2) profile_log2=$2;; --profile-batch-modes) profile_batch_modes=$2;;
                     --ncu-max-kernels) ncu_max_kernels=$2;; --ncu-library-max-kernels) ncu_library_max_kernels=$2;;
                 esac
@@ -26,9 +28,11 @@ t1_parse() {
             --dry-run) dry_run=1; shift;;
             --skip-ncu) skip_ncu=1; shift;;
             --verify-fftw) verify_fftw=1; shift;;
+            --fft2-out-of-place) fft2_out_of_place=1; shift;;
             --help|-h)
                 echo "Usage: $0 --tag NEW_TAG [--quick] [--skip-ncu] [--dry-run]"
-                echo '  [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft]'
+                echo '  [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft,fft2]'
+                echo '  [--fft2-n1 0] [--fft2-tile-cols 0] [--fft2-tile-rows 0] [--fft2-out-of-place]'
                 echo '  [--trials 15] [--iters 20] [--verify-fftw]'
                 echo '  [--profile-log2 16,20,22,24] [--profile-batch-modes b1,t25]'
                 echo '  [--ncu-max-kernels 50] [--ncu-library-max-kernels 12]'
@@ -46,7 +50,14 @@ t1_parse() {
     fi
     [[ $log2 =~ ^[0-9]+(,[0-9]+)*$ && $profile_log2 =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo 'Invalid exponent list' >&2; exit 2; }
     [[ $batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ && $profile_batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ ]] || { echo 'Invalid batch modes' >&2; exit 2; }
-    [[ $impls =~ ^(legacy|cufft|vkfft)(,(legacy|cufft|vkfft))*$ ]] || { echo 'Invalid implementation list' >&2; exit 2; }
+    [[ $impls =~ ^(legacy|cufft|vkfft|fft2)(,(legacy|cufft|vkfft|fft2))*$ ]] || { echo 'Invalid implementation list' >&2; exit 2; }
+    local value
+    for value in "$fft2_n1" "$fft2_tile_cols" "$fft2_tile_rows"; do
+        if ! [[ $value =~ ^[0-9]+$ ]] || ((${#value} > 10)) || ((10#$value > 2147483647)); then
+            echo 'fft2 options must be nonnegative integers <= INT_MAX (0 = auto)' >&2; exit 2;
+        fi
+    done
+    fft2_n1=$((10#$fft2_n1)); fft2_tile_cols=$((10#$fft2_tile_cols)); fft2_tile_rows=$((10#$fft2_tile_rows))
     [[ $trials =~ ^[1-9][0-9]*$ && $iters =~ ^[1-9][0-9]*$ ]] || { echo 'Trials/iters must be positive integers' >&2; exit 2; }
     [[ $ncu_max_kernels =~ ^[1-9][0-9]*$ && $ncu_library_max_kernels =~ ^[1-9][0-9]*$ ]] || { echo 'ncu capture limits must be positive integers' >&2; exit 2; }
     ((${#ncu_max_kernels} <= 9 && ${#ncu_library_max_kernels} <= 9)) || { echo 'ncu capture limits are too large' >&2; exit 2; }
@@ -57,8 +68,10 @@ t1_parse() {
     # shellcheck disable=SC2034
     bw_bin="$out/build/bwtest"
     sweep_args=(--tag "$tag" --log2 "$log2" --batch-modes "$batch_modes" --trials "$trials" --iters "$iters")
+    fft2_args=(--fft2-n1 "$fft2_n1" --fft2-tile-cols "$fft2_tile_cols" --fft2-tile-rows "$fft2_tile_rows")
+    ((fft2_out_of_place == 0)) || fft2_args+=(--fft2-out-of-place)
     forward_args=("${sweep_args[@]}" --impls "$impls" --profile-log2 "$profile_log2" --profile-batch-modes "$profile_batch_modes"
-                  --ncu-max-kernels "$ncu_max_kernels" --ncu-library-max-kernels "$ncu_library_max_kernels")
+                  --ncu-max-kernels "$ncu_max_kernels" --ncu-library-max-kernels "$ncu_library_max_kernels" "${fft2_args[@]}")
     ((quick == 0)) || forward_args+=(--quick)
     ((verify_fftw == 0)) || forward_args+=(--verify-fftw)
     ((skip_ncu == 0)) || forward_args+=(--skip-ncu)
@@ -67,6 +80,31 @@ t1_parse() {
 t1_print() { printf '+ '; printf '%q ' "$@"; printf '\n'; }
 t1_run() { t1_print "$@"; if ((dry_run == 0)); then "$@"; fi; }
 t1_require_new() { [[ ! -e $1 ]] || { echo "Refusing to overwrite $1; choose a new tag" >&2; exit 2; }; }
+t1_fft2_name() {
+    printf 'fft2[n1=%s,c=%s,r=%s' "$fft2_n1" "$fft2_tile_cols" "$fft2_tile_rows"
+    ((fft2_out_of_place == 0)) || printf ',oop=1'
+    printf ']'
+}
+t1_nvtx_filter() {
+    local name=$1 char i
+    for ((i=0; i<${#name}; ++i)); do
+        char=${name:i:1}
+        case $char in
+            '['|']'|','|'/'|'@'|'*'|'+') printf '\\%s' "$char";;
+            *) printf '%s' "$char";;
+        esac
+    done
+    printf '/'
+}
+t1_csv_row() {
+    local separator='' value
+    for value in "$@"; do
+        value=${value//\"/\"\"}
+        printf '%s"%s"' "$separator" "$value"
+        separator=,
+    done
+    printf '\n'
+}
 t1_batch() {
     local n=$1 mode=$2 exponent value
     [[ $mode =~ ^([bt])([0-9]+)$ ]] || return 2

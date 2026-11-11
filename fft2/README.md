@@ -62,6 +62,15 @@ can require several GiB of host memory. Windows NumPy may implement
 `longdouble` as double; the table-only rounding check accounts for this while
 the full-transform tolerance stays `1e-13`.
 
+Local CPU validation on 2026-11-11 (NumPy 1.26.4, pytest 9.2.0):
+
+```text
+python -m pytest fft2/reference -q --tb=short
+193 passed, 8 skipped in 10.71s
+python -m pytest fft2/reference -q -m slow --run-slow --tb=short
+8 passed, 193 deselected in 57.72s
+```
+
 ## API and lifetime
 
 ```cpp

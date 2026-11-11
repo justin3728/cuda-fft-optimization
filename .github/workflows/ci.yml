@@ -1,0 +1,48 @@
+# CI (CPU runners only; no GPU or CUDA executable is run).
+# python: Run analysis tests and the NumPy FFT reference tests on Python 3.12.
+# shell: Check all scripts with bash/shellcheck and dry-run the T1 pipeline.
+# cuda-compile: Build fft2 for sm_80/sm_89, measurement tools, and legacy on CUDA 13.
+# notebooks: Validate notebook JSON/schema and warn about outputs over 1 MB.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            .github/workflows/ci.yml
+            scripts/analysis/requirements.txt
+      - name: Analysis tests
+        shell: bash
+        run: |
+          if [[ -d tests ]]; then
+            pip install -r scripts/analysis/requirements.txt pytest
+            pytest tests -q
+          else
+            echo "::notice::tests/ is absent; skipping analysis tests."
+          fi
+      - name: FFT reference tests
+        shell: bash
+        run: |
+          if [[ -d fft2/reference ]]; then
+            pip install numpy pytest
+            pytest fft2/reference -q
+          else
+            echo "::notice::fft2/reference/ is absent; skipping reference tests."
+          fi

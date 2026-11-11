@@ -13,38 +13,45 @@
 
 using namespace measure;
 namespace {
-constexpr const char* header = "impl,N,log2N,batch,batch_mode,timing_mode,trials,iters_per_trial,time_ms_median,time_ms_min,time_ms_p10,time_ms_p90,rel_l2_err,max_abs_err,status,note\n";
+constexpr const char* header = "impl,N,log2N,batch,batch_mode,timing_mode,trials,iters_per_trial,time_ms_median,time_ms_min,time_ms_p10,time_ms_p90,rel_l2_err,max_abs_err,status,note,impl_detail\n";
 const std::vector<std::string> modes = {"hot", "cold"};
+fft2::PlanOptions fft2_options(const Options& opts) {
+    return {opts.nonnegative_integer("--fft2-n1"), opts.nonnegative_integer("--fft2-tile-cols"),
+            opts.nonnegative_integer("--fft2-tile-rows")};
+}
 std::string config_id(const std::string& impl, const Config& cfg) {
     return impl + "_N" + std::to_string(cfg.n) + "_b" + std::to_string(cfg.batch) + "_" + cfg.batch_mode;
 }
 void prefix(std::ostream& out, const std::string& impl, const Config& cfg,
             const std::string& mode, int trials, int iters) {
-    out << impl << ',' << cfg.n << ',' << int(std::log2(double(cfg.n))) << ',' << cfg.batch << ','
+    out << csv(impl) << ',' << cfg.n << ',' << int(std::log2(double(cfg.n))) << ',' << cfg.batch << ','
         << cfg.batch_mode << ',' << mode << ',' << trials << ',' << (mode == "hot" ? iters : 1) << ',';
 }
 void status_rows(std::ostream& out, const std::string& impl, const Config& cfg, int trials, int iters,
                  const std::string& status, const std::string& reason) {
     for (const auto& mode : modes) {
         prefix(out, impl, cfg, mode, trials, iters);
-        out << "NA,NA,NA,NA,NA,NA," << status << ',' << csv(reason) << '\n';
+        out << "NA,NA,NA,NA,NA,NA," << status << ',' << csv(reason) << ",\n";
     }
 }
 int single(const Options& opts, const Config& cfg, const std::string& impl) {
     const auto root = result_root(opts.get("--tag"));
     const bool profile = opts.has("--profile"), exporting = opts.has("--export-vkfft");
-    auto fft = backend(impl, exporting);
+    auto fft = backend(impl, exporting, fft2_options(opts), opts.has("--fft2-out-of-place"));
+    const auto label = fft->name();
     const int trials = opts.integer("--trials", 15), iters = opts.integer("--iters", 20);
     const int warmup = opts.integer("--warmup", 3);
     std::string reason;
     if (!fft->supports(cfg.n, cfg.batch, &reason)) {
         if (profile || exporting) { std::cout << "unsupported: " << reason << '\n'; return 3; }
-        auto out = new_output(root / "sweep/rows" / (config_id(impl, cfg) + ".csv"));
-        status_rows(out, impl, cfg, trials, iters, "unsupported", reason);
+        auto out = new_output(root / "sweep/rows" / (config_id(label, cfg) + ".csv"));
+        status_rows(out, label, cfg, trials, iters, "unsupported", reason);
         return 0;
     }
     Stream stream;
     fft->plan(cfg.n, cfg.batch);
+    const auto detail = fft->detail();
+    if (!detail.empty()) std::cout << "impl_detail=" << detail << '\n';
     if (exporting) {
         fft->export_kernels(root / "vkfft_kernels" / ("N" + std::to_string(cfg.n) + "_b" + std::to_string(cfg.batch)));
         fft->destroy(); return 0;
@@ -61,7 +68,7 @@ int single(const Options& opts, const Config& cfg, const std::string& impl) {
         restore(stream.value);
         T1_CUDA(cudaStreamSynchronize(stream.value));
         {
-            NvtxRange range("prof/" + impl + "/N" + std::to_string(cfg.n) + "/b" + std::to_string(cfg.batch));
+            NvtxRange range("prof/" + label + "/N" + std::to_string(cfg.n) + "/b" + std::to_string(cfg.batch));
             execute(stream.value); // Exactly one execution, including every batch's kernels.
         }
         T1_CUDA(cudaStreamSynchronize(stream.value));
@@ -77,7 +84,7 @@ int single(const Options& opts, const Config& cfg, const std::string& impl) {
         Reference reference(cfg.n, cfg.batch);
         auto* ref = reference.run(input.get(), stream.value);
         restore(stream.value); execute(stream.value);
-        error = compare(fft->buffer(), ref, count, stream.value);
+        error = compare(fft->output(), ref, count, stream.value);
         if (opts.has("--verify-fftw") && cfg.batch == 1 && cfg.n <= (size_t(1) << 20)) {
             const auto check = verify_fftw(input.get(), ref, cfg.n, stream.value);
             reference_ok = std::isfinite(check.relative_l2) && check.relative_l2 <= threshold;
@@ -95,10 +102,11 @@ int single(const Options& opts, const Config& cfg, const std::string& impl) {
     std::vector<Stats> statistics;
     for (const auto& mode : modes)
         statistics.push_back(time_trials(execute, restore, flush, stream.value, mode, trials, iters, warmup));
-    auto out = new_output(root / "sweep/rows" / (config_id(impl, cfg) + ".csv"));
+    auto out = new_output(root / "sweep/rows" / (config_id(label, cfg) + ".csv"));
     for (size_t i = 0; i < modes.size(); ++i) {
-        prefix(out, impl, cfg, modes[i], trials, iters); write_stats(out, statistics[i]);
-        out << ',' << error.relative_l2 << ',' << error.maximum << ',' << status << ',' << csv(note) << '\n';
+        prefix(out, label, cfg, modes[i], trials, iters); write_stats(out, statistics[i]);
+        out << ',' << error.relative_l2 << ',' << error.maximum << ',' << status << ',' << csv(note)
+            << ',' << csv(detail) << '\n';
     }
     fft->destroy();
     return status == "ok" ? 0 : 2;
@@ -111,7 +119,8 @@ int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vecto
     auto out = new_output(root / "sweep/raw.csv"); out << header; out.flush();
     bool failed = false;
     for (const auto& cfg : cfgs) for (const auto& impl : impls) {
-        const std::string id = config_id(impl, cfg);
+        const auto label = backend(impl, false, fft2_options(opts), opts.has("--fft2-out-of-place"))->name();
+        const std::string id = config_id(label, cfg);
         const auto row_path = root / "sweep/rows" / (id + ".csv");
         const auto log_path = root / "sweep/config_logs" / (id + ".log");
         if (std::filesystem::exists(row_path) || std::filesystem::exists(log_path))
@@ -123,6 +132,10 @@ int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vecto
             "--iters", opts.get("--iters", "20"), "--warmup", opts.get("--warmup", "3"),
             "--threshold", opts.get("--threshold", "1e-12")};
         if (opts.has("--verify-fftw")) args.push_back("--verify-fftw");
+        for (const auto* key : {"--fft2-n1", "--fft2-tile-cols", "--fft2-tile-rows"}) {
+            if (opts.has(key)) { args.push_back(key); args.push_back(opts.get(key)); }
+        }
+        if (opts.has("--fft2-out-of-place")) args.push_back("--fft2-out-of-place");
         std::vector<char*> argv;
         for (auto& arg : args) argv.push_back(arg.data());
         argv.push_back(nullptr);
@@ -144,7 +157,7 @@ int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vecto
         } else {
             std::ifstream log(log_path);
             std::ostringstream detail; detail << log.rdbuf();
-            status_rows(out, impl, cfg, opts.integer("--trials", 15), opts.integer("--iters", 20), "error",
+            status_rows(out, label, cfg, opts.integer("--trials", 15), opts.integer("--iters", 20), "error",
                         "worker exit " + std::to_string(code) + "; " + log_path.string() + "; " + detail.str().substr(0, 2000));
         }
         out.flush(); failed = failed || code != 0;
@@ -155,11 +168,13 @@ int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vecto
 } // namespace
 int main(int argc, char** argv) {
     try {
-        Options opts(argc, argv, {"--worker", "--profile", "--export-vkfft", "--versions", "--verify-fftw", "--help"},
-                     {"--tag", "--n", "--log2", "--batch", "--batch-modes", "--impls", "--trials", "--iters", "--warmup", "--threshold"});
+        Options opts(argc, argv, {"--worker", "--profile", "--export-vkfft", "--versions", "--verify-fftw", "--fft2-out-of-place", "--help"},
+                     {"--tag", "--n", "--log2", "--batch", "--batch-modes", "--impl", "--impls", "--trials", "--iters", "--warmup", "--threshold",
+                      "--fft2-n1", "--fft2-tile-cols", "--fft2-tile-rows"});
         if (opts.has("--help")) {
-            std::cout << "fft_bench --tag TAG [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft]\n"
+            std::cout << "fft_bench --tag TAG [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft,fft2]\n"
                          "  [--trials 15] [--iters 20] [--warmup 3] [--threshold 1e-12] [--verify-fftw]\n"
+                         "  [--impl fft2] [--fft2-n1 0] [--fft2-tile-cols 0] [--fft2-tile-rows 0] [--fft2-out-of-place]\n"
                          "  --profile | --export-vkfft: requires exactly one --n, --batch and --impls config\n";
             return 0;
         }
@@ -168,8 +183,12 @@ int main(int argc, char** argv) {
             std::cout << "cuFFT version: " << version << "\nVkFFT commit: " << T1_VKFFT_COMMIT << '\n'; return 0;
         }
         const auto cfgs = configs(opts);
-        const auto impls = split(opts.get("--impls", "legacy,cufft,vkfft"));
-        for (const auto& impl : impls) { auto checked = backend(impl); (void)checked; }
+        if (opts.has("--impl") && opts.has("--impls")) throw std::runtime_error("choose --impl or --impls");
+        const auto impls = split(opts.get("--impl", opts.get("--impls", "legacy,cufft,vkfft,fft2")));
+        for (const auto& impl : impls) {
+            auto checked = backend(impl, false, fft2_options(opts), opts.has("--fft2-out-of-place"));
+            (void)checked;
+        }
         if (opts.has("--profile") && opts.has("--export-vkfft")) throw std::runtime_error("choose profile or export");
         if (opts.has("--worker") || opts.has("--profile") || opts.has("--export-vkfft")) {
             if (cfgs.size() != 1 || impls.size() != 1) throw std::runtime_error("single-config mode requires one size/batch/impl");

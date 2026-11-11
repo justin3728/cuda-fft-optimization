@@ -45,6 +45,15 @@ struct Options {
         if (value > size_t(std::numeric_limits<int>::max())) throw std::runtime_error(key + " exceeds INT_MAX");
         return int(value);
     }
+    int nonnegative_integer(const std::string& key, int fallback = 0) const {
+        const auto text = get(key, std::to_string(fallback));
+        if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
+            throw std::runtime_error(key + " requires a nonnegative integer (0 = auto)");
+        const auto value = std::stoull(text);
+        if (value > static_cast<unsigned long long>(std::numeric_limits<int>::max()))
+            throw std::runtime_error(key + " exceeds INT_MAX");
+        return int(value);
+    }
 };
 struct Config { size_t n; int batch; std::string batch_mode; };
 inline int batch_for(size_t n, const std::string& mode) {

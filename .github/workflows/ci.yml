@@ -81,6 +81,48 @@ jobs:
             echo "::notice::scripts/run_t1_all.sh is absent; skipping T1 dry-runs."
           fi
 
+  cuda-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: nvidia/cuda:13.0.2-devel-ubuntu24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # Install git before checkout so submodule initialization has a Git worktree.
+      - name: Install build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends build-essential ca-certificates git libfftw3-dev
+      - uses: actions/checkout@v4
+      - name: Build fft2 (sm_80, warnings as errors)
+        run: |
+          if [[ -d fft2 ]]; then
+            make -C fft2 CUDA_ARCH=sm_80
+          else
+            echo "::notice::fft2/ is absent; skipping the sm_80 build."
+          fi
+      - name: Build fft2 (sm_89, warnings as errors)
+        run: |
+          if [[ -d fft2 ]]; then
+            make -C fft2 CUDA_ARCH=sm_89
+          else
+            echo "::notice::fft2/ is absent; skipping the sm_89 build."
+          fi
+      - name: Build measurement tools (sm_80)
+        run: |
+          if [[ -d bench ]]; then
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            git submodule update --init third_party/VkFFT
+            make bench tools TAG=ci CUDA_ARCH=sm_80
+          else
+            echo "::notice::bench/ is absent; skipping VkFFT and measurement tool builds."
+          fi
+      - name: Build legacy (sm_80)
+        run: make -B CUDA_ARCH=sm_80
+
   notebooks:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -4,7 +4,7 @@ import shutil
 
 import pytest
 
-from make_report import Missing, Record, Run, generate_report, kernel_metrics
+from make_report import Missing, Record, Run, gap_values, generate_report, kernel_metrics
 
 
 FIXTURE = Path(__file__).parent / "fixtures/report"
@@ -38,6 +38,14 @@ def test_captured_environment(tmp_path):
         assert value in report
     assert "9999 MHz" not in report
     assert "| ncu cache control | all |" in report
+    assert "| ncu clock control | none |" in report
+
+
+def test_none_is_a_measured_cache_policy(tmp_path):
+    target = tmp_path / "policies/ncu"
+    write_rows(target / "index.csv", [dict(cache_control="none", clock_control="none")])
+    report = generate_report(tmp_path, "policies")
+    assert "| ncu cache control | none |" in report
     assert "| ncu clock control | none |" in report
 
 
@@ -188,3 +196,31 @@ def test_missing_calibration_does_not_use_stored_factor(tmp_path):
     report = generate_report(tmp_path, "current")
     assert "missing dram_traffic_factor for working_set_MiB=4096" in report
     assert "| 68.928 | 1.92402e+07 | 12544 | n/a[^missing-" in report
+
+
+def test_gap_units_percentage_policy_and_missing_passes(tmp_path):
+    # CPU-only arithmetic fixture: 10 µs − 3 passes × 2 µs = 4 µs (40%).
+    target = tmp_path / "arithmetic"
+    write_rows(target / "bandwidth/pass_floor.csv", [dict(
+        N=128, batch=1, batch_mode="b1", timing_mode="hot", copy_kind="inplace", status="ok", time_ms_median=.002)])
+    write_rows(target / "ncu/copy_calibration.csv", [dict(
+        working_set_MiB=4096, cache_control="all", dram_traffic_factor=2)])
+    total = dict(impl="fft2", N=128, batch=1, batch_mode="b1", cache_control="none", calibrated_memory_passes=3)
+    write_rows(target / "ncu/config_totals.csv", [total])
+    row = Record(dict(impl="fft2", N=128, batch=1, batch_mode="b1", timing_mode="hot",
+                      status="ok", time_ms_median=.010), "CPU arithmetic")
+    assert gap_values(Run(tmp_path, "arithmetic"), row) == (3, 4, 40)
+    total["cache_control"] = "all"
+    write_rows(target / "ncu/config_totals.csv", [total])
+    assert all(isinstance(value, Missing) for value in gap_values(Run(tmp_path, "arithmetic"), row))
+
+
+def test_extrapolated_totals_do_not_supply_gap(tmp_path):
+    target = copy_run(tmp_path)
+    rows = read_rows(target / "ncu/config_totals.csv")
+    for row in rows:
+        row["totals_extrapolated"] = "true"
+    write_rows(target / "ncu/config_totals.csv", rows)
+    report = generate_report(tmp_path, "current")
+    assert "sampled/extrapolated totals cannot supply a measured gap" in report
+    assert "| 1048576 | 1 | b1 | legacy | hot | 604.365 | 1.16181 | 21.6587 | ok | n/a" in report

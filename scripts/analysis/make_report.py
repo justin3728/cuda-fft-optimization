@@ -15,7 +15,7 @@ from io_utils import number
 
 ROOT = Path(__file__).resolve().parents[2]
 IMPLEMENTATIONS = ("legacy", "cufft", "vkfft", "fft2")
-ABSENT = {"", "na", "n/a", "none", "null", "nan", "not supported"}
+ABSENT = {"", "na", "n/a", "null", "nan", "not supported"}
 
 
 @dataclass(frozen=True)
@@ -298,11 +298,20 @@ def sweep_section(run, md, impls):
     output += (f"Source: `{run.source(run.sweep_file)}`. Times are unprofiled medians. "
                "Speedup = cuFFT time / implementation time; passes-equivalent = time / "
                "same-config, same-mode in-place pass floor. Derived metrics require status=ok.\n\n")
+    output += ("Gap = implementation time − calibrated DRAM passes × pass floor; gap (%) = "
+               "100 × gap / implementation time. Passes come from config_totals.csv, with "
+               "copy_calibration.csv required. Hot uses cache_control=none; cold uses all. "
+               "These ncu replay policies differ from the sweep's cache handling, so this is "
+               "an observed-traffic floor comparison, not an inferred algorithmic pass count. "
+               "Sampled/extrapolated totals are unavailable for gaps. "
+               "For L2-resident configs, deferred DRAM writes undercount passes; judge the "
+               "per-kernel L2 metrics. Negative gaps are retained.\n\n")
     columns = ["N", "Batch", "Batch label", "Impl"]
     has_detail = any("impl_detail" in row.data for row in run.sweeps)
     if has_detail:
         columns += ["impl_detail"]
-    columns += ["Timing", "Median (µs)", "Speedup vs cuFFT (×)", "Passes-equivalent", "Correctness status"]
+    columns += ["Timing", "Median (µs)", "Speedup vs cuFFT (×)", "Passes-equivalent", "Correctness status",
+                "Calibrated DRAM passes", "Gap (µs)", "Gap (%)"]
     rows = []
     for row in sweep_entries(run, impls):
         time = eligible_time(row)
@@ -312,6 +321,7 @@ def sweep_section(run, md, impls):
         values += [row.value("timing_mode"), calc(lambda ms: ms * 1000, row.numeric("time_ms_median", positive=True)),
                    calc(lambda reference, ms: reference / ms, cufft_time(run, row), time),
                    calc(lambda ms, floor: ms / floor, time, pass_floor(run, row)), row.value("status")]
+        values += list(gap_values(run, row))
         rows.append(values)
     if not rows:
         rows = [[run.missing(run.sweep_file, "sweep rows")] * len(columns)]
@@ -399,6 +409,31 @@ def calibration_factor(run):
         raise ValueError(f"{run.source(run.calibration_file)}: duplicate HBM copy calibration")
     return rows[0].numeric("dram_traffic_factor", positive=True) if rows else run.missing(
         run.calibration_file, "dram_traffic_factor for working_set_MiB=4096, cache_control=all")
+
+
+def traffic_passes(run, row):
+    identity = key(row, ("impl", *CONFIG))
+    cache = {"hot": "none", "cold": "all"}.get(row.data.get("timing_mode"))
+    total_key = (*identity, cache, detail(row)) if identity is not None and cache else None
+    total = indexed(run.totals, PROFILE, variants=True).get(total_key)
+    if total is None:
+        return run.missing(run.total_file, f"calibrated_memory_passes for {total_key}")
+    if any(str(total.data.get(field, "")).lower() in {"true", "1", "yes"}
+           for field in ("sampled", "totals_extrapolated")):
+        return Missing((f"{total.source}: sampled/extrapolated totals cannot supply a measured gap",))
+    factor = calibration_factor(run)
+    if "calibrated_memory_passes" in total.data:
+        return calc(lambda passes, calibration: passes, total.numeric("calibrated_memory_passes"), factor)
+    return calc(lambda raw, calibration: raw / calibration, total.numeric("effective_memory_passes"), factor)
+
+
+def gap_values(run, row):
+    passes = traffic_passes(run, row)
+    time = eligible_time(row)
+    floor = pass_floor(run, row)
+    gap_us = calc(lambda ms, count, pass_ms: (ms - count * pass_ms) * 1000, time, passes, floor)
+    gap_pct = calc(lambda gap, ms: gap / (ms * 1000) * 100, gap_us, time)
+    return passes, gap_us, gap_pct
 
 
 def fits_l2(run, config):

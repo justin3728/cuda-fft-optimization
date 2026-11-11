@@ -1,0 +1,7 @@
+# ncu 2025.3.1 raw-layout/unit regression: byte/block was reported by the committed L4 smoke review.
+# Numeric values are synthetic test inputs, not an original raw export or additional GPU measurements.
+"ID","Process ID","Process Name","Host Name","Kernel Name","Context","Stream","Block Size","Grid Size","Device","CC","Section Name","Metric Name","Metric Unit","Metric Value"
+"0","1577","fft_bench","unit-fixture","void fft_block_1024_specialized(double2*)","1","13","(256, 1, 1)","(1024, 1, 1)","0","8.9","Launch Statistics","launch__shared_mem_per_block_static","byte/block","16,896"
+"0","1577","fft_bench","unit-fixture","void fft_block_1024_specialized(double2*)","1","13","(256, 1, 1)","(1024, 1, 1)","0","8.9","Launch Statistics","launch__shared_mem_per_block_dynamic","byte/block","512"
+"0","1577","fft_bench","unit-fixture","void fft_block_1024_specialized(double2*)","1","13","(256, 1, 1)","(1024, 1, 1)","0","8.9","Launch Statistics","launch__registers_per_thread","register/thread","78"
+"0","1577","fft_bench","unit-fixture","void fft_block_1024_specialized(double2*)","1","13","(256, 1, 1)","(1024, 1, 1)","0","8.9","Speed Of Light","gpu__time_duration.sum","nsecond","10,000"

@@ -6,18 +6,20 @@ cd -- "$T1_ROOT"
 tag='' quick=0 dry_run=0 skip_ncu=0 verify_fftw=0
 log2='' batch_modes='' impls='legacy,cufft,vkfft' trials='' iters=20
 profile_log2='' profile_batch_modes='b1,t25'
+ncu_max_kernels=50 ncu_library_max_kernels=12
 PYTHON=${PYTHON:-python3}
 NCU=${NCU:-ncu}
 
 t1_parse() {
     while (($#)); do
         case $1 in
-            --tag|--log2|--batch-modes|--impls|--trials|--iters|--profile-log2|--profile-batch-modes)
+            --tag|--log2|--batch-modes|--impls|--trials|--iters|--profile-log2|--profile-batch-modes|--ncu-max-kernels|--ncu-library-max-kernels)
                 (($# >= 2)) || { echo "Missing value for $1" >&2; exit 2; }
                 case $1 in
                     --tag) tag=$2;; --log2) log2=$2;; --batch-modes) batch_modes=$2;;
                     --impls) impls=$2;; --trials) trials=$2;; --iters) iters=$2;;
                     --profile-log2) profile_log2=$2;; --profile-batch-modes) profile_batch_modes=$2;;
+                    --ncu-max-kernels) ncu_max_kernels=$2;; --ncu-library-max-kernels) ncu_library_max_kernels=$2;;
                 esac
                 shift 2;;
             --quick) quick=1; shift;;
@@ -29,6 +31,7 @@ t1_parse() {
                 echo '  [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft]'
                 echo '  [--trials 15] [--iters 20] [--verify-fftw]'
                 echo '  [--profile-log2 16,20,22,24] [--profile-batch-modes b1,t25]'
+                echo '  [--ncu-max-kernels 50] [--ncu-library-max-kernels 12]'
                 exit 0;;
             *) echo "Unknown argument: $1" >&2; exit 2;;
         esac
@@ -45,6 +48,8 @@ t1_parse() {
     [[ $batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ && $profile_batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ ]] || { echo 'Invalid batch modes' >&2; exit 2; }
     [[ $impls =~ ^(legacy|cufft|vkfft)(,(legacy|cufft|vkfft))*$ ]] || { echo 'Invalid implementation list' >&2; exit 2; }
     [[ $trials =~ ^[1-9][0-9]*$ && $iters =~ ^[1-9][0-9]*$ ]] || { echo 'Trials/iters must be positive integers' >&2; exit 2; }
+    [[ $ncu_max_kernels =~ ^[1-9][0-9]*$ && $ncu_library_max_kernels =~ ^[1-9][0-9]*$ ]] || { echo 'ncu capture limits must be positive integers' >&2; exit 2; }
+    ((${#ncu_max_kernels} <= 9 && ${#ncu_library_max_kernels} <= 9)) || { echo 'ncu capture limits are too large' >&2; exit 2; }
     out="results/$tag"
     # Public globals used by the scripts that source this file.
     # shellcheck disable=SC2034
@@ -52,7 +57,8 @@ t1_parse() {
     # shellcheck disable=SC2034
     bw_bin="$out/build/bwtest"
     sweep_args=(--tag "$tag" --log2 "$log2" --batch-modes "$batch_modes" --trials "$trials" --iters "$iters")
-    forward_args=("${sweep_args[@]}" --impls "$impls" --profile-log2 "$profile_log2" --profile-batch-modes "$profile_batch_modes")
+    forward_args=("${sweep_args[@]}" --impls "$impls" --profile-log2 "$profile_log2" --profile-batch-modes "$profile_batch_modes"
+                  --ncu-max-kernels "$ncu_max_kernels" --ncu-library-max-kernels "$ncu_library_max_kernels")
     ((quick == 0)) || forward_args+=(--quick)
     ((verify_fftw == 0)) || forward_args+=(--verify-fftw)
     ((skip_ncu == 0)) || forward_args+=(--skip-ncu)

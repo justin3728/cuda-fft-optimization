@@ -2,10 +2,12 @@
 
 This tooling measures FP64 complex-to-complex, contiguous, in-place, forward,
 unnormalized FFTs. It does not change the existing FFT implementation or its
-default build. GPU correctness, throughput, profiler/API behavior, and the
-quick/full runtime targets are **unverified until run on the A100**. No measured
-performance results are supplied with this change. Test fixtures are synthetic
-parser/arithmetic inputs and are not performance measurements.
+default build. The owner supplied a successful pre-fix L4 quick smoke run in
+[`results/smoke_l4_20261111/`](../results/smoke_l4_20261111/). The review fixes
+documented here require another GPU run; no new GPU measurements accompany this
+round. A100 correctness, throughput and the full runtime target remain
+**unverified**. Synthetic arithmetic fixtures and reconstructed raw-CSV unit
+fixtures are identified as test inputs, rather than new performance results.
 
 ## Layout
 
@@ -38,8 +40,9 @@ newer), NVIDIA driver, cuFFT, NVRTC, CUDA driver development library/stubs,
 NVTX3 headers, Nsight Compute, Bash, GNU Make, Git and Python 3.10+.
 The updated project plan also targets Colab's CUDA 13.0 environment. The scripts
 explicitly build `sm_80`, and bandwidth reference queries use device attributes
-instead of the `cudaDeviceProp` clock fields removed in CUDA 13. CUDA 12.x and
-13.x builds, and VkFFT's CUDA 13 NVRTC behavior, remain unverified here.
+instead of the `cudaDeviceProp` clock fields removed in CUDA 13. The owner's
+pre-fix L4 smoke run validated CUDA 13 compilation and VkFFT initialization;
+the changed CUDA code has not been rebuilt in the CPU authoring environment.
 If the toolkit does not include `nvtx3/nvToolsExt.h`, install NVIDIA's NVTX3
 headers on the compiler include path. Optional FFTW checks require double
 precision FFTW headers/library (`libfftw3-dev` on Ubuntu).
@@ -62,7 +65,9 @@ The quick run uses sweep/export exponents `16,20,24`, batch mode `b1`, and
 keep their required working-set sizes and minimum durations in quick mode.
 The full sweep uses every exponent `16..24`, modes `b1,b8,t25`, `R=15`, `K=20`.
 Targets are at most five minutes for quick and 45 minutes for full, **not
-verified here**. `--set full` replay cost, especially legacy's host batch loop,
+verified on the A100**. The full default ncu plan now has an upper bound of
+334 captured kernel launches, including cache-policy comparisons and bandwidth
+copies. Its dry-run prints the bound per config and in total. Replay cost still
 depends on the installed ncu release and GPU host. The runner reports actual
 elapsed seconds per stage in `stage_status.csv`.
 
@@ -92,6 +97,11 @@ configs, defaulting to `16,20,22,24` and `b1,t25`. Quick export follows the quic
 sweep sizes/modes, while quick profiling uses `--profile-log2` and batch one.
 Equivalent batch labels share one generated-source export per actual N/batch;
 ncu can still profile each label separately.
+`--ncu-max-kernels` (default 50) controls legacy sampling and is rounded down to
+complete batches. `--ncu-library-max-kernels` (default 12) is a safety guard for
+cuFFT/VkFFT; reaching it is an error because a complete library execution cannot
+then be inferred. Raise that guard when the installed library legitimately uses
+more kernels. Both options propagate through `run_t1_all.sh`.
 `PYTHON`, `NCU` and `CUDA_ARCH` can select installed tools/architecture. Direct
 binary invocations support `--n`, explicit `--batch`, `--warmup`, `--threshold`
 and `--help` in addition to the documented shell options. For explicit-batch
@@ -116,12 +126,17 @@ adapter through the three-line registry in `backend.hpp`.
   calls only `fft_execute_plan_cuda_async`; its host batch loop and scratch
   behavior remain intact. Destruction uses `fft_destroy_plan_cuda`.
 * cuFFT uses `cufftPlanMany`, `CUFFT_Z2Z`, explicit contiguous distances/strides,
-  `cufftSetStream` and `CUFFT_FORWARD`. Its version is recorded in `env.txt`.
+  `cufftSetStream` and `CUFFT_FORWARD`. A cached stream binding calls
+  `cufftSetStream` only on the first warmup or a stream change, outside the
+  same-stream timed execution loop. Its version is recorded in `env.txt`.
 * VkFFT uses `VKFFT_BACKEND=1`, driver launches and NVRTC. Configuration sets
   `FFTdim=1`, `doublePrecision=1`, `numberBatches=batch`, one stream, one buffer,
   and `makeForwardPlanOnly=1`. `VkFFTAppend(...,-1,...)` selects the negative
   exponential forward convention, matching cuFFT. No normalization is enabled.
   With one stream VkFFT's pinned code does not use its multi-stream host sync.
+  After initialization, a checked `cudaDeviceSynchronize()` completes setup
+  issued on stream 0 before the nonblocking timing stream is used. Execution
+  updates its stream pointer only when the stream changes.
 
 The sweep supervisor does not create a CUDA context. It fork/execs a new worker
 for each implementation/config, captures its log, and collects two timing-mode
@@ -157,11 +172,15 @@ Both the FFT sweep and both copy floors call the **same** `time_trials` helper:
 2. **Hot:** restore the input by D2D outside timing, then record one CUDA event
    pair around `K=20` back-to-back in-place executions on the same nonblocking
    stream. Divide elapsed time by K. Repeat for `R=15` trials.
-3. **Cold:** restore by D2D, launch a grid-stride write flush covering at least
+3. **Cold:** restore by D2D, launch a grid-stride **read** flush covering at least
    twice the queried `cudaDevAttrL2CacheSize`, then place one event pair around
    **one** execution. Restore, flush and events are ordered on the same stream;
    neither restore nor flush contributes to the measured interval. Repeat R
    times. The program fails clearly if L2 size cannot be determined.
+   The flush source is initialized and primed once, with checked synchronization
+   outside timing. Each flush uses `.cg` loads and a small per-block result sink;
+   it evicts data without leaving a dirty 2×L2 write buffer that the timed kernel
+   would have to write back. The sweep and both pass floors use this same helper.
 4. Synchronize the end event and compute median, minimum, p10 and p90 over the
    per-execution samples. Percentiles use linear interpolation between sorted
    adjacent ranks, at `(R-1)*q`.
@@ -292,6 +311,23 @@ works directly in one process in profile mode; ncu also uses
 so VkFFT's `cuLaunchKernel` calls are included. The command escapes the literal
 slashes in the NVTX name and adds the final push/pop filter slash.
 
+The NVTX range and original batch allocation still cover a full execution.
+`--launch-count` bounds how many matching launches ncu replays; the application
+finishes the remaining work without profiling it. Legacy uses one kernel per
+batch for N<=1024 and five per batch for larger supported powers of two. The
+default cap captures at most the first ten complete large-N batches (50
+kernels). For example, N=2^16 with t25 has 512 batches and 2560 expected kernels,
+but only 50 are captured; its extrapolation factor is 2560/50. These are launch
+counts derived from the implementation, not measured performance estimates.
+The command keeps the original full config, so sampling does not silently
+replace its working set with a smaller allocation.
+
+cuFFT/VkFFT normally complete below their 12-launch safety guard. A guard hit
+fails the config with unknown expected total rather than treating a possibly
+truncated execution as complete or inventing an extrapolation ratio. Bandwidth
+copies each capture their known single launch. Actual counts are parsed from
+the raw CSV, and legacy counts must match the planned complete-batch prefix.
+
 Primary captures use `--set full --cache-control all --clock-control none
 --replay-mode kernel`. This makes replay passes reproducible by flushing GPU
 caches and leaves GPU clocks under the host's existing policy. It is deliberately
@@ -314,13 +350,18 @@ full set. Optional counters absent in an installed version do not invalidate the
 whole capture. Each binary `.ncu-rep` is exported using
 `ncu --import … --page raw --csv --print-units base`. `index.csv` maps raw CSVs
 to implementation/config/cache-control/status, including unsupported legacy
-configs. Captures and CSV exports have individual logs too.
+configs. It also records `captured_kernels`, `expected_kernels`, `sampled`,
+`capture_limit` and `kernels_per_batch`. Captures and CSV exports have individual
+logs too. An older index without sampling columns is interpreted as a complete
+capture for backward-compatible analysis.
 
 `ncu_summary.py` supports long metric-row CSV and wide metric-column CSV with
 units rows, quoted thousands separators, profiler banners and repeated headers.
 It identifies each launch by process/context/stream/ID, preserving repeated
 kernel names. Missing metrics emit **NA and a warning**, including in aggregate
-totals; no partial total is presented as complete. `lts__t_sectors.sum*32` is an
+totals; no incomplete counter sum is presented as complete. Shared-memory byte
+units include ncu 2025.3's `byte/block` and scaled byte-per-block forms, preserving
+the per-block quantity. `lts__t_sectors.sum*32` is an
 explicitly warned fallback if `lts__t_bytes.sum` is absent.
 
 Per-config CSV and Markdown under `ncu/summary/` contain:
@@ -330,13 +371,32 @@ Per-config CSV and Markdown under `ncu/summary/` contain:
 | `impl,N,batch,batch_mode,cache_control,kernel_id,kernel` | Config, replay policy, distinct launch ID, shortened demangled kernel name |
 | `grid,block,registers_per_thread` | Grid/block tuple when exported, with launch-count metrics as fallback, and registers per thread |
 | `static_smem_bytes,dynamic_smem_bytes,smem_bytes` | Shared memory per block and their sum |
-| `duration_us,pct_config_time` | Profiled duration in microseconds and percent of this config's sum of kernel durations |
+| `duration_us,pct_config_time` | Profiled duration in microseconds and percent of the captured kernel-duration sum; sampling does not alter per-kernel values |
 | `dram_read_bytes,dram_write_bytes,lts_bytes` | Per-launch DRAM and total L2 traffic |
-| `dram_GBs,pct_measured_hbm_copy` | `(DRAM read+write)/duration`, normalized to measured HBM kernel-copy limit |
-| `l2_GBs,pct_measured_l2_copy` | `lts_bytes/duration`, normalized to measured L2 copy plateau |
+| `dram_GBs,pct_measured_hbm_copy` | Historical `(DRAM read+write)/duration` and copy-limit percentage, retained for compatibility |
+| `pct_mixed_hbm_limit` | Ideal read-plus-write service time at the separately measured peaks, divided by actual kernel duration, as a percentage |
+| `l2_GBs,pct_measured_l2_copy` | `lts_bytes/duration` and historical L2 copy-limit percentage |
+| `pct_l2_limit,l2_limit_method` | Total lts traffic normalized to the measured L2 read plateau; method is `total_lts_bytes/read_plateau` because a read/write sector split is not collected |
+| `working_set_fits_l2` | Conservative two-buffer proxy: `32*N*batch <= limits.json:l2_size_bytes`; NA if cache size is unavailable or this is a bandwidth-copy profile |
+| `sampled,captured_kernels,expected_kernels,sampling_ratio,extrapolation_factor` | Sampling flag/counts, captured/expected ratio and expected/captured scale |
 | `theoretical_occupancy_pct,achieved_occupancy_pct` | Theoretical maximum and active-warps occupancy metrics |
 | `shared_bank_conflicts_ld,shared_bank_conflicts_st,fp64_pipe_util_pct` | Shared load/store conflict counters and FP64 pipe utilization |
 | `stall_1,stall_1_pct` through `stall_3,stall_3_pct` | Largest WarpStateStats stalled cycles per active warp percentages, descending |
+
+With bytes in B, peaks in decimal GB/s and duration in microseconds, the new HBM
+percentage is
+`100*(dram_read_bytes/(1000*hbm_read_GBs) + dram_write_bytes/(1000*hbm_write_GBs))/duration_us`.
+The L2 percentage is `100*lts_bytes/(1000*l2_read_GBs_plateau*duration_us)`.
+Missing/nonpositive peaks or missing traffic/duration produce NA and a warning.
+Values are never clipped to 100: counter traffic inflation, deferred writes,
+measurement variability and differing cache policies remain visible. In
+particular, the new formula alone does not guarantee every historical L4 value
+will fall below 100%.
+
+When `working_set_fits_l2` is true, the per-config Markdown displays:
+"DRAM bytes undercount traffic (writes deferred in L2); judge this config by L2 metrics."
+The flag is a documented working-set proxy, not a proof that all library scratch
+and temporaries are resident.
 
 Each config table has a footer with total kernel time, total DRAM bytes and
 the requested `effective_memory_passes = DRAM bytes/(2*16*N*batch)` raw traffic
@@ -352,6 +412,16 @@ observed DRAM traffic, whereas
 `pass_equiv` describes unprofiled elapsed time relative to the exact-size copy
 floor. Neither is a claim about the implementation's algorithmic pass count.
 Bandwidth-copy profiles have N/batch zero and an NA effective FFT-pass count.
+For a sampled legacy config, `total_time_us`, `total_dram_bytes` and
+`effective_memory_passes` scale the captured sums by `expected_kernels/captured_kernels`.
+The CSV/Markdown retains `captured_time_us`, `captured_dram_bytes` and
+`captured_effective_memory_passes`, marks `totals_extrapolated=true`, and prints
+an extrapolation note. `kernel_count` remains the observed launch count.
+Sampling uses the first complete batches and assumes their cost represents
+later batches; extrapolated totals are estimates, especially for the no-flush
+cache policy. Per-kernel metrics and captured-percent-of-time values are not
+scaled. Count mismatches, partial legacy batches or an unknown sampling ratio
+are errors instead of fabricated complete totals.
 The summaries compare VkFFT launch counts to exported manifests when available
 and report a mismatch as an analysis error after writing the tables.
 
@@ -387,7 +457,9 @@ scripts/run_t1_all.sh --tag test --dry-run
 CPU tests cover derivation units/joins/statuses, PNG generation, realistic ncu
 CSV structures, missing counters/limits, units, kernel identity, export-count
 mismatches, report retention, dry-run side effects, independent stage failures
-and counter-permission errors. Source review must also confirm the protected
+and counter-permission errors. Fix-round regression tests cover bounded complete-
+batch sampling, extrapolated totals, read-dominated HBM percentages, L2 residency
+notes and ncu 2025.3 shared-memory units. Source review must also confirm the protected
 legacy files/results are unchanged and the original default Makefile recipes
 are unchanged. The code has not been built with nvcc in the authoring
 environment, where that compiler is unavailable.

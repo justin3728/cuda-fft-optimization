@@ -65,10 +65,14 @@ public:
         // No normalization is requested. GPU correctness compares both libraries.
         vk_check(initializeVkFFT(&app_, config), "initializeVkFFT");
         ready_ = true;
+        // Initialization may enqueue work on stream 0. Measurement uses a
+        // nonblocking stream, so explicitly complete setup before handing the
+        // initialized plan to correctness, warmup, profiling or export paths.
+        T1_CUDA(cudaDeviceSynchronize());
     }
     cuDoubleComplex* buffer() override { return data_.get(); }
     void execute(cudaStream_t stream) override {
-        stream_ = stream;
+        if (stream != stream_) stream_ = stream;
         VkFFTLaunchParams launch{};
         vk_check(VkFFTAppend(&app_, -1, &launch), "VkFFTAppend(forward)");
     }

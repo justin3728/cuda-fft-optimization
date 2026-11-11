@@ -33,9 +33,16 @@ FIELDS = ["impl", "N", "batch", "batch_mode", "cache_control", "kernel_id", "ker
           "pct_config_time", "dram_read_bytes", "dram_write_bytes", "lts_bytes", "dram_GBs",
           "pct_measured_hbm_copy", "l2_GBs", "pct_measured_l2_copy", "theoretical_occupancy_pct",
           "achieved_occupancy_pct", "shared_bank_conflicts_ld", "shared_bank_conflicts_st", "fp64_pipe_util_pct",
-          "stall_1", "stall_1_pct", "stall_2", "stall_2_pct", "stall_3", "stall_3_pct"]
+          "stall_1", "stall_1_pct", "stall_2", "stall_2_pct", "stall_3", "stall_3_pct",
+          "pct_mixed_hbm_limit", "pct_l2_limit", "l2_limit_method", "working_set_fits_l2",
+          "sampled", "captured_kernels", "expected_kernels", "sampling_ratio", "extrapolation_factor"]
 TOTAL_FIELDS = ["impl", "N", "batch", "batch_mode", "cache_control", "kernel_count", "total_time_us",
-                "total_dram_bytes", "effective_memory_passes", "dram_copy_traffic_factor", "calibrated_memory_passes"]
+                "total_dram_bytes", "effective_memory_passes", "dram_copy_traffic_factor", "calibrated_memory_passes",
+                "working_set_fits_l2", "sampled", "captured_kernels", "expected_kernels", "sampling_ratio",
+                "extrapolation_factor", "totals_extrapolated", "captured_time_us", "captured_dram_bytes",
+                "captured_effective_memory_passes"]
+L2_RESIDENT_NOTE = "DRAM bytes undercount traffic (writes deferred in L2); judge this config by L2 metrics."
+L2_LIMIT_METHOD = "total_lts_bytes/read_plateau"
 
 
 @dataclass
@@ -99,6 +106,10 @@ def convert(value: str, unit: str, kind: str) -> float | None:
             return None
         return result * factors[unit]
     if kind.endswith("bytes"):
+        # Launch shared-memory metrics are bytes per block, not traffic bytes.
+        # The quantity already describes one block; strip only that denominator.
+        if kind in ("static_smem_bytes", "dynamic_smem_bytes"):
+            unit = re.sub(r"\s*/\s*block$", "", unit).strip()
         factors = {"byte": 1, "bytes": 1, "b": 1, "kbyte": 1e3, "mbyte": 1e6,
                    "gbyte": 1e9, "kib": 1024, "mib": 1024**2, "gib": 1024**3}
         if unit not in factors:
@@ -131,14 +142,71 @@ def complete_sum(values) -> float | None:
     return sum(values) if all(v is not None for v in values) else None
 
 
+def sampling_metadata(config: dict, captured: int) -> dict:
+    """Validate capture declarations; never infer a full count from a truncated CSV."""
+    def count(name):
+        value = config.get(name)
+        if value is None or str(value).strip().lower() in ("", "na", "n/a", "none"):
+            return None
+        text = str(value).strip()
+        if not re.fullmatch(r"[0-9]+", text) or int(text) < 1:
+            raise ValueError(f"invalid {name}: {value!r}")
+        return int(text)
+
+    if captured < 1:
+        raise ValueError("cannot summarize zero captured kernels")
+    declared = count("captured_kernels")
+    if declared is not None and declared != captured:
+        raise ValueError(f"declared captured_kernels={declared} differs from raw CSV count {captured}")
+    declared_sampled = config.get("sampled")
+    if declared_sampled is not None:
+        text = str(declared_sampled).strip().lower()
+        if text not in ("true", "false", "1", "0", "yes", "no"):
+            raise ValueError(f"unknown sampling state: {declared_sampled!r}; cannot extrapolate")
+        declared_sampled = text in ("true", "1", "yes")
+    expected = count("expected_kernels")
+    if expected is None:
+        if declared_sampled:
+            raise ValueError("sampled capture requires a known expected_kernels count")
+        expected = captured  # Backward-compatible complete captures/old index schemas.
+    if expected < captured:
+        raise ValueError("expected_kernels cannot be smaller than captured_kernels")
+    sampled = captured < expected
+    if declared_sampled is not None and declared_sampled != sampled:
+        raise ValueError("sampled flag disagrees with captured/expected kernel counts")
+    limit = count("capture_limit")
+    if limit is not None and captured > limit:
+        raise ValueError("raw CSV count exceeds declared capture_limit")
+    per_batch = count("kernels_per_batch")
+    if config.get("impl") == "legacy" and per_batch is not None:
+        if captured % per_batch or expected % per_batch:
+            raise ValueError("legacy sampling must contain complete batches")
+        if expected != int(config["batch"]) * per_batch:
+            raise ValueError("legacy expected_kernels disagrees with batch*kernels_per_batch")
+    return {"sampled": sampled, "captured_kernels": captured, "expected_kernels": expected,
+            "sampling_ratio": captured / expected, "extrapolation_factor": expected / captured}
+
+
 def summarize(kernels: list[Kernel], config: dict, limits: dict) -> tuple[list[dict], dict]:
     rows = []
+    sampling = sampling_metadata(config, len(kernels))
+    n, batch = int(config.get("N", 0)), int(config.get("batch", 0))
+    l2_size = positive(limits.get("l2_size_bytes"))
+    fits_l2 = 32 * n * batch <= l2_size if n > 0 and batch > 0 and l2_size is not None else None
     hbm, l2 = positive(limits.get("hbm_copy_GBs")), positive(limits.get("l2_copy_GBs_plateau"))
     if hbm is None or l2 is None:
         warnings.warn("measured HBM/L2 copy limit missing or nonpositive; affected percentages are NA", stacklevel=2)
+    hbm_read = positive(limits.get("hbm_read_GBs"))
+    hbm_write = positive(limits.get("hbm_write_GBs"))
+    l2_read = positive(limits.get("l2_read_GBs_plateau"))
+    if hbm_read is None or hbm_write is None or l2_read is None:
+        warnings.warn("measured HBM read/write or L2 read limit missing/nonpositive; affected new percentages are NA", stacklevel=2)
+    if n > 0 and batch > 0 and l2_size is None:
+        warnings.warn("L2 size missing/nonpositive; working_set_fits_l2 is NA", stacklevel=2)
     for kernel in kernels:
         short_name = re.sub(r"^(?:void|__global__)\s+", "", kernel.name).split("(", 1)[0]
-        row = {**config, "kernel_id": kernel.identity, "kernel": short_name,
+        row = {**config, **sampling, "working_set_fits_l2": fits_l2,
+               "kernel_id": kernel.identity, "kernel": short_name,
                **{key: metric(kernel, key) for key in METRICS}}
         for field_name, metadata, name in [("grid", kernel.grid, "launch__grid_size"), ("block", kernel.block, "launch__block_size")]:
             fallback = kernel.metrics.get(name, (None, ""))[0]
@@ -155,6 +223,16 @@ def summarize(kernels: list[Kernel], config: dict, limits: dict) -> tuple[list[d
         row["l2_GBs"] = row["lts_bytes"] / (duration * 1000) if row["lts_bytes"] is not None and duration else None
         row["pct_measured_hbm_copy"] = row["dram_GBs"] / hbm * 100 if row["dram_GBs"] is not None and hbm else None
         row["pct_measured_l2_copy"] = row["l2_GBs"] / l2 * 100 if row["l2_GBs"] is not None and l2 else None
+        # GB/s -> bytes/us requires *1000. The read/write peaks are separate
+        # measurements; ideal service times are added before normalizing.
+        read_bytes, write_bytes = row["dram_read_bytes"], row["dram_write_bytes"]
+        row["pct_mixed_hbm_limit"] = (
+            100 * (read_bytes / (hbm_read * 1000) + write_bytes / (hbm_write * 1000)) / duration
+            if read_bytes is not None and write_bytes is not None and hbm_read and hbm_write and duration else None)
+        # No L2 read/write split is inferred from the DRAM mix: L2 may retain
+        # dirty writes. This explicitly read-normalizes all observed LTS bytes.
+        row["pct_l2_limit"] = row["l2_GBs"] / l2_read * 100 if row["l2_GBs"] is not None and l2_read else None
+        row["l2_limit_method"] = L2_LIMIT_METHOD
         stalls = []
         for name, (value, unit) in kernel.metrics.items():
             if re.fullmatch(r"smsp__warp_issue_stalled_.+_per_warp_active\.pct", name):
@@ -171,9 +249,14 @@ def summarize(kernels: list[Kernel], config: dict, limits: dict) -> tuple[list[d
     total_dram = complete_sum(complete_sum([r["dram_read_bytes"], r["dram_write_bytes"]]) for r in rows)
     for row in rows:
         row["pct_config_time"] = row["duration_us"] / total_time * 100 if positive(total_time) and row["duration_us"] is not None else None
-    n, batch = int(config.get("N", 0)), int(config.get("batch", 0))
-    total = {**config, "kernel_count": len(rows), "total_time_us": total_time, "total_dram_bytes": total_dram,
-             "effective_memory_passes": total_dram / (32 * n * batch) if n > 0 and batch > 0 and total_dram is not None else None}
+    captured_passes = total_dram / (32 * n * batch) if n > 0 and batch > 0 and total_dram is not None else None
+    factor = sampling["extrapolation_factor"]
+    total = {**config, **sampling, "working_set_fits_l2": fits_l2, "kernel_count": len(rows),
+             "totals_extrapolated": sampling["sampled"], "captured_time_us": total_time,
+             "captured_dram_bytes": total_dram, "captured_effective_memory_passes": captured_passes,
+             "total_time_us": total_time * factor if total_time is not None else None,
+             "total_dram_bytes": total_dram * factor if total_dram is not None else None,
+             "effective_memory_passes": captured_passes * factor if captured_passes is not None else None}
     return rows, total
 
 
@@ -256,6 +339,9 @@ def run(root: Path) -> None:
             continue
         raw_path = root / "ncu" / entry["raw_csv"]
         config = {key: entry[key] for key in ["impl", "N", "batch", "batch_mode", "cache_control"]}
+        for key in ("captured_kernels", "expected_kernels", "sampled", "capture_limit", "kernels_per_batch"):
+            if key in entry:
+                config[key] = entry[key]
         rows, total = summarize(parse_raw(raw_path), config, limits)
         profiles.append((entry, rows, total))
     calibration, traffic_factor = copy_calibration(profiles)
@@ -272,15 +358,27 @@ def run(root: Path) -> None:
         stem = raw_path.stem
         write_csv(root / "ncu/summary" / f"{stem}.csv", rows, FIELDS)
         text = "# Per-kernel profile\n\n" + md_table(rows, FIELDS)
+        if total["working_set_fits_l2"]:
+            text += "\n" + L2_RESIDENT_NOTE + "\n"
+        text += "\nL2 limit method: total LTS bytes divided by the measured L2 read plateau; no read/write sector split is inferred.\n"
+        if total["sampled"]:
+            text += (f"\n**Extrapolated config totals:** captured {total['captured_kernels']} of "
+                     f"{total['expected_kernels']} expected kernel launches "
+                     f"(sampling ratio {total['sampling_ratio']:.6g}); multiply captured totals by "
+                     f"{total['extrapolation_factor']:.6g}. This is a bounded prefix of complete legacy batches, "
+                     "not a measurement of every batch. Per-kernel metrics remain as captured; "
+                     "pct_config_time is each kernel's fraction of captured kernel time.\n")
+        else:
+            text += f"\nComplete capture: {total['captured_kernels']} kernel launches; totals are measured, not extrapolated.\n"
         text += "\nConfig totals (raw traffic ratio = total DRAM bytes / (2 × 16 × N × batch); calibrated passes divide by the HBM copy traffic factor):\n\n" + md_table([total], TOTAL_FIELDS)
-        text += "\nPercentages use measured copy limits. NCU replay durations are distinct from unprofiled sweep times.\n"
+        text += "\nLegacy copy-normalized percentages are retained. pct_mixed_hbm_limit adds read/write service times at their separately measured peaks; pct_l2_limit uses the measured read plateau. NCU replay durations are distinct from unprofiled sweep times.\n"
         if entry["impl"] == "vkfft":
             manifest = root / "vkfft_kernels" / f"N{entry['N']}_b{entry['batch']}" / "manifest.json"
             if manifest.exists():
                 expected = json.loads(manifest.read_text(encoding="utf-8"))["kernel_count"]
-                text += f"\nExported kernel count: {expected}; captured launch count: {len(rows)}.\n"
-                if expected != len(rows):
-                    warnings.warn(f"VkFFT export/ncu launch count mismatch for {stem}: {expected} != {len(rows)}", stacklevel=2)
+                text += f"\nExported kernel count: {expected}; captured launch count: {len(rows)}; expected execution launches: {total['expected_kernels']}.\n"
+                if expected != total["expected_kernels"]:
+                    warnings.warn(f"VkFFT export/ncu launch count mismatch for {stem}: {expected} != {total['expected_kernels']}", stacklevel=2)
                     mismatch = True
             else:
                 warnings.warn(f"VkFFT manifest missing for {stem}; count comparison unverified", stacklevel=2)
@@ -300,8 +398,11 @@ def main(argv=None) -> None:
     parser.add_argument("--query-file", type=Path, action="append")
     parser.add_argument("--metrics-out", type=Path)
     parser.add_argument("--retain-reports", action="store_true")
+    parser.add_argument("--count-kernels", type=Path, help="print only the number of distinct launches in a raw CSV")
     args = parser.parse_args(argv)
-    if args.query_file:
+    if args.count_kernels:
+        print(len(parse_raw(args.count_kernels)))
+    elif args.query_file:
         if not args.metrics_out:
             parser.error("--query-file requires --metrics-out")
         metrics = select_metrics("\n".join(p.read_text(encoding="utf-8") for p in args.query_file))

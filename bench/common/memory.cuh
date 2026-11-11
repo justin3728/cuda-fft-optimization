@@ -47,13 +47,26 @@ __global__ void read16(const double2* source, size_t count, double2* sink, int p
 }
 class L2Flush {
     DeviceBuffer<double2> buffer_;
+    DeviceBuffer<double2> sink_;
     size_t count_;
     int blocks_;
 public:
-    L2Flush() : buffer_(), count_((2 * l2_bytes() + 15) / 16),
-                blocks_(device_properties().multiProcessorCount * 8) { buffer_.allocate(count_); }
+    L2Flush() : buffer_(), sink_(), count_((2 * l2_bytes() + 15) / 16),
+                blocks_(device_properties().multiProcessorCount * 8) {
+        buffer_.allocate(count_);
+        sink_.allocate(size_t(blocks_));
+        // Initialize once, outside every timing interval. Read back the full
+        // buffer to evict initialization's dirty lines before using it as a
+        // clean, read-only cache flush on nonblocking measurement streams.
+        T1_CUDA(cudaMemset(buffer_.get(), 0, count_ * sizeof(double2)));
+        read16<<<blocks_, 256>>>(buffer_.get(), count_, sink_.get());
+        T1_CUDA(cudaGetLastError());
+        T1_CUDA(cudaDeviceSynchronize());
+    }
     void operator()(cudaStream_t stream) {
-        write16<<<blocks_, 256, 0, stream>>>(buffer_.get(), count_, 1.0);
+        // .cg loads bypass L1 and evict prior data without filling L2 with a
+        // dirty 2x-L2 buffer. Only the small per-block result sink is written.
+        read16<<<blocks_, 256, 0, stream>>>(buffer_.get(), count_, sink_.get());
         T1_CUDA(cudaGetLastError());
     }
 };

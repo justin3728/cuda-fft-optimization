@@ -3,7 +3,7 @@
 set -euo pipefail
 T1_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$T1_ROOT"
-tag='' quick=0 dry_run=0 skip_ncu=0 verify_fftw=0
+tag='' quick=0 dry_run=0 skip_ncu=0 verify_fftw=0 skip_copy_profiles=0
 log2='' batch_modes='' impls='legacy,cufft,vkfft,fft2' trials='' iters=20
 fft2_n1=0 fft2_tile_cols=0 fft2_tile_rows=0 fft2_out_of_place=0
 profile_log2='' profile_batch_modes='b1,t25'
@@ -27,6 +27,7 @@ t1_parse() {
             --quick) quick=1; shift;;
             --dry-run) dry_run=1; shift;;
             --skip-ncu) skip_ncu=1; shift;;
+            --skip-copy-profiles) skip_copy_profiles=1; shift;;
             --verify-fftw) verify_fftw=1; shift;;
             --fft2-out-of-place) fft2_out_of_place=1; shift;;
             --help|-h)
@@ -64,9 +65,9 @@ t1_parse() {
     out="results/$tag"
     # Public globals used by the scripts that source this file.
     # shellcheck disable=SC2034
-    bench_bin="$out/build/fft_bench"
+    bench_bin=${FFT_BENCH:-"$out/build/fft_bench"}
     # shellcheck disable=SC2034
-    bw_bin="$out/build/bwtest"
+    bw_bin=${BWTEST:-"$out/build/bwtest"}
     sweep_args=(--tag "$tag" --log2 "$log2" --batch-modes "$batch_modes" --trials "$trials" --iters "$iters")
     fft2_args=(--fft2-n1 "$fft2_n1" --fft2-tile-cols "$fft2_tile_cols" --fft2-tile-rows "$fft2_tile_rows")
     ((fft2_out_of_place == 0)) || fft2_args+=(--fft2-out-of-place)
@@ -75,6 +76,7 @@ t1_parse() {
     ((quick == 0)) || forward_args+=(--quick)
     ((verify_fftw == 0)) || forward_args+=(--verify-fftw)
     ((skip_ncu == 0)) || forward_args+=(--skip-ncu)
+    ((skip_copy_profiles == 0)) || forward_args+=(--skip-copy-profiles)
 }
 
 t1_print() { printf '+ '; printf '%q ' "$@"; printf '\n'; }

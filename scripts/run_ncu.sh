@@ -136,9 +136,11 @@ while read -r exponent; do
 done <<< "$exponents"
 # Both sizes get the primary cold-replay run. The L2-sized copy also gets a
 # no-flush run, since cache-control=all deliberately destroys its hot plateau.
+if ((skip_copy_profiles == 0)); then
 capture bwcopy 0 0 WS4096 all bwcopy_WS4096_cache_all 'prof\/bwcopy\/WS4096/' "$bw_bin" --tag "$tag" --profile-copy-mib 4096
 capture bwcopy 0 0 WS16 all bwcopy_WS16_cache_all 'prof\/bwcopy\/WS16/' "$bw_bin" --tag "$tag" --profile-copy-mib 16
 capture bwcopy 0 0 WS16 none bwcopy_WS16_cache_none 'prof\/bwcopy\/WS16/' "$bw_bin" --tag "$tag" --profile-copy-mib 16
+fi
 printf 'NCU total capture upper bound: %s kernels (actual library counts are recorded after capture)\n' "$capture_budget"
 if ! t1_run "$PYTHON" scripts/analysis/ncu_summary.py --results "$out" --retain-reports; then failed=1; fi
 exit "$failed"

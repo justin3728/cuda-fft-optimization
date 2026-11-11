@@ -35,3 +35,18 @@ def test_captured_environment(tmp_path):
     assert "9999 MHz" not in report
     assert "| ncu cache control | all |" in report
     assert "| ncu clock control | none |" in report
+
+
+def test_measured_limits_and_floors():
+    report = generate_report(FIXTURE, TAG)
+    assert "| HBM read (GB/s) | 259.81 |" in report
+    assert "| L2 read plateau (GB/s) | 1486.92 |" in report
+    assert "| 65536 | 1 | b1 | hot | inplace | 3.4304 | ok |" in report
+    assert "theoretical_dram" not in report
+
+
+def test_missing_limit_file(tmp_path):
+    report = generate_report(tmp_path, "empty")
+    assert "| HBM read (GB/s) | n/a[^missing-" in report
+    assert "results/empty/bandwidth/limits.json: missing hbm_read_GBs" in report
+    assert "results/empty/bandwidth/pass_floor.csv: missing pass-floor rows" in report

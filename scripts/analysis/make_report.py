@@ -177,10 +177,36 @@ def header(run, md, title="Measurement report"):
     return output
 
 
+def limits_section(run, md):
+    output = "## Measured limits\n\n"
+    output += f"Source: `{run.limits.source}`. Bandwidth uses decimal GB/s.\n\n"
+    fields = [("HBM read (GB/s)", "hbm_read_GBs"),
+              ("HBM write (GB/s)", "hbm_write_GBs"),
+              ("HBM copy, read + write (GB/s)", "hbm_copy_GBs"),
+              ("L2 read plateau (GB/s)", "l2_read_GBs_plateau"),
+              ("L2 copy plateau (GB/s)", "l2_copy_GBs_plateau"),
+              ("L2 size (bytes)", "l2_size_bytes")]
+    output += md.table(["Measurement", "Value"],
+                       [(label, run.limits.numeric(field, positive=True)) for label, field in fields]
+                       + [("L2 plateau range (MiB)", run.limits.value("l2_plateau_range_MiB")),
+                          ("L2 plateau rule", run.limits.value("l2_plateau_rule"))])
+    output += f"### Per-size pass floors\n\nSource: `{run.source('bandwidth/pass_floor.csv')}`.\n\n"
+    rows = []
+    for row in run.rows("bandwidth/pass_floor.csv"):
+        rows.append([row.value(field) for field in ("N", "batch", "batch_mode", "timing_mode", "copy_kind")]
+                    + [calc(lambda ms: ms * 1000, row.numeric("time_ms_median", positive=True)),
+                       row.value("status")])
+    if not rows:
+        rows = [[run.missing("bandwidth/pass_floor.csv", "pass-floor rows")]]
+        rows[0] *= 7
+    output += md.table(["N", "Batch", "Batch label", "Timing", "Copy kind", "Median (µs)", "Status"], rows)
+    return output
+
+
 def generate_report(results_root, tag, *, baseline_tag=None, impls=IMPLEMENTATIONS, plots=False, out=None):
     md = Markdown()
     run = Run(results_root, tag)
-    return header(run, md) + md.footnotes()
+    return header(run, md) + limits_section(run, md) + md.footnotes()
 
 
 def safe_tag(value):

@@ -1,0 +1,7 @@
+impl,N,log2N,batch,batch_mode,timing_mode,trials,iters_per_trial,time_ms_median,time_ms_min,time_ms_p10,time_ms_p90,rel_l2_err,max_abs_err,status,note,impl_detail
+cufft,65536,16,1,b1,hot,3,20,0.25,0.2,0.21,0.3,0,0,ok,synthetic test fixture,
+legacy,65536,16,1,b1,hot,3,20,0.5,0.4,0.45,0.6,1e-14,1e-10,ok,synthetic test fixture,
+vkfft,65536,16,1,b1,hot,3,20,0.2,0.18,0.19,0.23,1e-14,1e-10,ok,synthetic test fixture,
+"fft2[n1=0,c=0,r=0]",65536,16,1,b1,hot,3,20,0.2,0.18,0.19,0.23,1e-14,1e-10,ok,synthetic test fixture,"fft2 N=65536 batch=1 N1=256 N2=256 C=8 R=8 workspace_bytes=1048576 pass1{grid=(32,1,1),block=(256,1,1),smem_bytes=32768} pass2{grid=(32,1,1),block=(256,1,1),smem_bytes=32768}"
+"fft2[n1=256,c=4,r=8]",65536,16,1,b1,hot,3,20,0.2,0.18,0.19,0.23,1e-14,1e-10,ok,synthetic test fixture,"fft2 N=65536 batch=1 N1=256 N2=256 C=4 R=8 workspace_bytes=1048576 pass1{grid=(64,1,1),block=(256,1,1),smem_bytes=16384} pass2{grid=(32,1,1),block=(256,1,1),smem_bytes=32768}"
+"fft2[n1=256,c=8,r=8,oop=1]",65536,16,1,b1,hot,3,20,0.2,0.18,0.19,0.23,1e-14,1e-10,ok,synthetic test fixture,"fft2 N=65536 batch=1 N1=256 N2=256 C=8 R=8 workspace_bytes=1048576 pass1{grid=(32,1,1),block=(256,1,1),smem_bytes=32768} pass2{grid=(32,1,1),block=(256,1,1),smem_bytes=32768}"

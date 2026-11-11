@@ -1,10 +1,13 @@
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import uuid
+
+import pytest
 
 from io_utils import read_csv
 
@@ -20,11 +23,14 @@ def test_full_dry_run_has_no_gpu_or_file_side_effects(bash):
                     "--cache-control all", "--cache-control none", "derive.py", "plot_sweep.py", "ncu_summary.py"]:
         assert command in result.stdout
     assert result.stdout.count("DRY-RUN") == 7
-    plans = list(re.finditer(r"NCU capture plan: impl=(\w+) N=(\d+) batch=(\d+) cache=(\w+) expected_kernels=(\S+) capture_limit=(\d+) sampled=(\w+)", result.stdout))
+    plans = list(re.finditer(r"NCU capture plan: impl=(\S+) N=(\d+) batch=(\d+) cache=(\w+) expected_kernels=(\S+) capture_limit=(\d+) sampled=(\w+)", result.stdout))
     assert plans
-    assert sum(int(item.group(6)) for item in plans) == 334
-    assert "NCU total capture upper bound: 334 kernels" in result.stdout
-    assert 334 <= 400
+    assert sum(int(item.group(6)) for item in plans) == 352
+    assert "NCU total capture upper bound: 352 kernels" in result.stdout
+    fft2 = [item for item in plans if item.group(1).startswith("fft2[")]
+    assert len(fft2) == 9
+    assert all((item.group(5), item.group(6), item.group(7)) == ("2", "2", "false") for item in fft2)
+    assert 352 <= 400
 
 
 def test_quick_skip_plan_and_bad_tag(bash):
@@ -77,15 +83,66 @@ report='' exporting=''
 while (($#)); do
     case $1 in --import) report=$2; shift 2;; --export) exporting=$2; shift 2;; *) shift;; esac
 done
-if [[ -n $exporting ]]; then printf 'synthetic report' > "$exporting.ncu-rep"; exit 0; fi
+if [[ -n $exporting ]]; then
+    printf 'synthetic report' > "$exporting.ncu-rep"
+    [[ $exporting != *fft2* ]] || echo 'impl_detail=fft2 N=1048576 batch=1 N1=1024 N2=1024 C=8 R=4'
+    exit 0
+fi
 count=1
 [[ $report != *legacy_N65536* ]] || count=10
 [[ $report != *cufft_N1048576* ]] || count=2
+[[ $report != *fft2* ]] || count=${FFT2_MOCK_KERNELS:-2}
 printf '"ID","Process ID","Kernel Name","Context","Stream","Block Size","Grid Size","Metric Name","Metric Unit","Metric Value"\\n'
 for ((i=0; i<count; ++i)); do
-    printf '"%s","1","test_kernel","1","7","(256, 1, 1)","(4, 1, 1)","gpu__time_duration.sum","nsecond","1000"\\n' "$i"
+    name=test_kernel
+    if [[ $report == *fft2* ]]; then
+        if ((i == 0)); then name='void fft2::pass1_columns()'; else name='void fft2::pass2_rows()'; fi
+    fi
+    printf '"%s","1","%s","1","7","(256, 1, 1)","(4, 1, 1)","gpu__time_duration.sum","nsecond","1000"\\n' "$i" "$name"
 done
 ''')
+
+
+def printed_commands(stdout):
+    return [shlex.split(line[2:]) for line in stdout.splitlines() if line.startswith("+ ")]
+
+
+def test_fft2_flags_reach_sweep_and_exact_nvtx_filters(bash):
+    result = subprocess.run([bash, "scripts/run_t1_all.sh", "--tag", "fft2_flags_dry", "--dry-run", "--quick",
+                             "--fft2-n1", "1024", "--fft2-tile-cols", "8", "--fft2-tile-rows", "4",
+                             "--fft2-out-of-place"], cwd=ROOT, text=True, capture_output=True, check=True)
+    commands = printed_commands(result.stdout)
+    sweep = next(cmd for cmd in commands if cmd[0].endswith("/fft_bench") and "--profile" not in cmd and "--export-vkfft" not in cmd and "--versions" not in cmd)
+    assert sweep[sweep.index("--impls") + 1] == "legacy,cufft,vkfft,fft2"
+    for flag, value in [("--fft2-n1", "1024"), ("--fft2-tile-cols", "8"), ("--fft2-tile-rows", "4")]:
+        assert sweep[sweep.index(flag) + 1] == value
+    profiles = [cmd for cmd in commands if "--nvtx-include" in cmd and "--impls" in cmd
+                and cmd[cmd.index("--impls") + 1] == "fft2"]
+    assert len(profiles) == 2  # cache all and none, one execution each
+    for cmd in profiles:
+        assert cmd[cmd.index("--launch-count") + 1] == "2"
+        assert cmd[cmd.index("--nvtx-include") + 1] == r"prof\/fft2\[n1=1024\,c=8\,r=4\,oop=1\]\/N1048576\/b1/"
+        assert "--fft2-out-of-place" in cmd
+
+
+@pytest.mark.parametrize("count", [1, 2, 3])
+def test_fft2_capture_requires_both_passes_and_preserves_quoted_metadata(bash, tmp_path, count):
+    shutil.copytree(ROOT / "scripts", tmp_path / "scripts")
+    mock = tmp_path / "mock_ncu"
+    mock_successful_ncu(mock)
+    env = {**os.environ, "NCU": mock.as_posix(), "PYTHON": Path(sys.executable).as_posix(),
+           "FFT2_MOCK_KERNELS": str(count)}
+    result = subprocess.run([bash, "scripts/run_ncu.sh", "--tag", "fft2_capture", "--impls", "fft2",
+                             "--profile-log2", "20", "--profile-batch-modes", "b1", "--skip-copy-profiles",
+                             "--fft2-n1", "1024", "--fft2-tile-cols", "8", "--fft2-tile-rows", "4"],
+                            cwd=tmp_path, text=True, capture_output=True, env=env)
+    assert result.returncode == (0 if count == 2 else 1), result.stdout + result.stderr
+    rows = read_csv(tmp_path / "results/fft2_capture/ncu/index.csv")
+    assert len(rows) == 2
+    assert all(row["status"] == ("ok" if count == 2 else "error") for row in rows)
+    assert all(row["impl"] == "fft2[n1=1024,c=8,r=4]" and row["expected_kernels"] == "2" for row in rows)
+    assert all(row["captured_kernels"] == str(count) and row["sampled"] == "false" for row in rows)
+    assert all("N1=1024 N2=1024 C=8 R=4" in row["impl_detail"] for row in rows)
 
 
 def test_sampled_capture_records_real_count_and_full_expected_count(bash, tmp_path):

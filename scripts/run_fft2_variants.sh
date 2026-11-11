@@ -12,6 +12,8 @@ while (($#)); do
             (($# >= 2)) || { echo 'Missing --variants file' >&2; exit 2; }
             variants_file=$2; shift 2;;
         --ncu) with_ncu=1; shift;;
+        --impl|--impls|--fft2-n1|--fft2-tile-cols|--fft2-tile-rows|--skip-copy-profiles)
+            echo 'Choose variant tuning in FILE; the runner always includes all three baselines.' >&2; exit 2;;
         --help|-h)
             echo 'Usage: scripts/run_fft2_variants.sh --tag NEW_TAG [--variants FILE] [--ncu] [--dry-run]'
             echo 'Common sweep/profile options are accepted. Default: scripts/fft2_variants_default.txt.'
@@ -25,6 +27,9 @@ t1_parse "${common_args[@]}"
 [[ $variants_file == /* ]] || variants_file="$invocation_dir/$variants_file"
 [[ -r $variants_file ]] || { echo "Cannot read variants: $variants_file" >&2; exit 2; }
 exponents=$(t1_exponents "$log2")
+log2=${exponents//$'\n'/,}
+profile_exponents=$(t1_exponents "$profile_log2")
+profile_log2=${profile_exponents//$'\n'/,}
 while read -r exponent; do
     ((exponent >= 16 && exponent <= 24)) || { echo 'fft2 variant exponents must be 16..24' >&2; exit 2; }
 done <<< "$exponents"
@@ -90,9 +95,9 @@ failed=0
 run_step() { if t1_run "$@"; then return 0; else failed=1; fi; }
 if ((dry_run == 0)); then
     mkdir -p "$out"
-    printf 'tag,log2,n1,c,r,oop\n' > "$out/variants.csv"
+    printf 'tag,path,log2,n1,c,r,oop\n' > "$out/variants.csv"
     for i in "${!variant_tags[@]}"; do
-        t1_csv_row "${variant_tags[i]}" "${variant_sizes[i]}" "${variant_n1[i]}" \
+        t1_csv_row "${variant_tags[i]}" "variants/${variant_tags[i]##*.}" "${variant_sizes[i]}" "${variant_n1[i]}" \
             "${variant_cols[i]}" "${variant_rows[i]}" "${variant_oop[i]}" >> "$out/variants.csv"
     done
 fi
@@ -106,12 +111,14 @@ run_step make -B tools bench "TAG=$tag" "CUDA_ARCH=${CUDA_ARCH:-sm_80}" "WITH_FF
 run_step scripts/collect_env.sh --tag "$tag" "${run_args[@]}"
 run_step scripts/run_bwtest.sh --tag "$tag" "${run_args[@]}"
 run_step "${workers[@]}" scripts/run_sweep.sh --tag "$tag.baseline" "${run_args[@]}" --impls legacy,cufft,vkfft
-merge_args=(--results "$out" --source "results/$tag.baseline")
+merge_args=(--results "$out" --source "$out/variants/baseline")
 if ((with_ncu)); then
     run_step scripts/export_vkfft_kernels.sh --tag "$tag" "${run_args[@]}"
     run_step "${workers[@]}" scripts/run_ncu.sh --tag "$tag.baseline" "${run_args[@]}" --impls legacy,cufft,vkfft
     merge_args+=(--ncu)
 fi
+run_step mkdir -p "$out/variants"
+run_step mv -- "results/$tag.baseline" "$out/variants/baseline"
 for i in "${!variant_tags[@]}"; do
     args=(--tag "${variant_tags[i]}" --log2 "${variant_sizes[i]}" --batch-modes "$batch_modes"
           --trials "$trials" --iters "$iters" --impls fft2 --fft2-n1 "${variant_n1[i]}"
@@ -131,7 +138,9 @@ for i in "${!variant_tags[@]}"; do
                 --profile-batch-modes "$profile_batch_modes" --skip-copy-profiles
         fi
     fi
-    merge_args+=(--source "results/${variant_tags[i]}")
+    worker_dir="$out/variants/${variant_tags[i]##*.}"
+    run_step mv -- "results/${variant_tags[i]}" "$worker_dir"
+    merge_args+=(--source "$worker_dir")
 done
 run_step "$PYTHON" scripts/analysis/merge_variants.py "${merge_args[@]}"
 analysis_args=(--tag "$tag")

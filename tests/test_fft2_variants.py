@@ -130,3 +130,7 @@ PY
     assert len(rows) == 6
     assert len({row["impl"] for row in rows}) == 6
     assert len(read_csv(tmp_path / "results/variants/variants.csv")) == 3
+    assert (tmp_path / "results/variants/variants/baseline/sweep/raw.csv").exists()
+    assert all((tmp_path / "results/variants" / row["path"] / "sweep/raw.csv").exists()
+               for row in read_csv(tmp_path / "results/variants/variants.csv"))
+    assert not (tmp_path / "results/variants.v001").exists()

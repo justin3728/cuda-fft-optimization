@@ -1,0 +1,10 @@
+# H13 tile sweep (optimization-log L003): shared memory per block vs blocks/SM.
+# Auto split (n1=0); C = R = k so pass 1 varies with C and pass 2 with R.
+# Only combinations that fit the A100 163 KiB opt-in limit (N1 * k * 16 B):
+#   2^16..2^20: k <= 8; 2^22 (N1=2048): k <= 4; 2^24 (N1=4096): k <= 2.
+# The auto policy picks the largest k that fits (1 block/SM at 2^24 on A100).
+n1=0 c=0 r=0
+n1=0 c=1 r=1
+n1=0 c=2 r=2
+log2=16,18,20,22 n1=0 c=4 r=4
+log2=16,18,20 n1=0 c=8 r=8

@@ -218,3 +218,27 @@
    把這條規則套到本次已量過的格子上，b1 各尺寸比 v1 快 1.2–2.3 倍，b8 和 t25 也沒有任何一格比 v1 慢。這是從已量的組合推算的，正式數字仍要 T4d 實作後再量。由 Codex 實作成小 PR（T4d），並在下次 A100 時驗證。
 2. **下一個主要假設是 H15（2^24 的記憶體並行度）**。這是 2^24 追上 cuFFT 的關鍵，排在 T4c（twiddle，H12）之後一起上 A100。
 3. 本次 2^20 b1 tp=1 rx=1 的 107.6 µs 首次比 legacy 的 170.4 µs 快（1.58 倍）；batched 2^20 b8 比 legacy 快 1.80 倍。
+
+## L007 — 2026-11-13 — 讀碼：VkFFT 在 A100 產生的 kernel 結構 vs fft2（無新 GPU 數據）（**草稿，待使用者審閱**）
+
+**來源**：`results/ab_a100_20261112/vkfft_kernels/`（VkFFT 10304 @ 066a17c，L006 同一次 A100 匯出），以及 `third_party/VkFFT/vkFFT/vkFFT/vkFFT_AppManagement/vkFFT_InitializeApp.h`。
+
+**VkFFT 各尺寸的 kernel（FP64，A100）**
+
+| 尺寸 | kernel 數 | threads | shared | 每 thread 的 global load（全部展開） | barrier |
+|---|---|---|---|---|---|
+| 2^16 | 2 | 128 / 512 | 16 / 72 KiB | 8 | 6 / 9 |
+| 2^20 | 2 | 256 / 128 | 128 / 80 KiB | 32 | 2 / 5 |
+| 2^22 | 2 | 512 / 256 | 128 / 64 KiB | 16 | 6 / 9 |
+| 2^24 | 3 | 128 | 32–36 KiB | 16 | 4–7 |
+
+- kernel 依尺寸產生，與 batch 無關（b1 與 b512、b1 與 b32 的配置相同）。VkFFT 不跑 benchmark 挑選，而是依廠商和硬體上限套規則產生程式碼。NVIDIA 的設定：`coalescedMemory=32` B、FP64 用 twiddle LUT、`registerBoost=4`、`swapTo3Stage4Step=4194305`（FP64 下 N > 2^22 改成 3 個 kernel）。
+- 每個 kernel 都把長度當編譯期常數，每個 thread 先連續發出 8–32 個 global load，再做運算。第一個 kernel 直接把資料載進 register 做第一段 radix-16，shared 只用來交換，最後從 register 直接寫回 global。
+
+**與 fft2 比較（推論，待 T4e 的 A/B 證實）**
+- VkFFT 在 2^20 用 128 KiB、256 threads，佔用率 12.5%，和 fft2 v1 相同，卻與 cuFFT 打平（L005：每個 kernel 達到上限的 74–87%）。所以 fft2 慢的主因不是佔用率，而是存取方式：fft2 的 load 迴圈次數在 runtime 才知道，每圈 1 個元素且先寫進 shared，每個 thread 同時只有約 1 個 load 在等；而且每段 register radix 都要經過一次 shared 來回和一個 barrier。這與 L006 的 `long_scoreboard` stall 37–58% 一致（**H15**）。
+- 使用者的經驗：legacy 把 2^20 的長度特化成編譯期常數後明顯變快，方向相同。
+- `coalescedMemory=32` B 與 L005 的觀察一致：k ≥ 2 欄（每列 32 B）時，DRAM 讀取是理想值的 1.00 倍。
+- 2^24：VkFFT 在 FP64 刻意用 3 趟；fft2 的 2 趟（每次 2 欄、128 KiB）是在賭 VkFFT 式的 register I/O 可以讓 2 趟跑贏 3 趟。若 T4e 之後 2^24 仍離 HBM 上限很遠，3 趟是退路。
+
+**下一步**：T4e 改寫為 VkFFT 式的編譯期形狀加 register I/O（`docs/codex-tasks/T4e-fft2-load-mlp.md`），並以 `io_mode` 做 A/B。

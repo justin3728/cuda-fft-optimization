@@ -24,20 +24,28 @@ int main() {
     struct Case { int length; int lanes[3]; };
     const Case cases[] = {
         {256, {8, 4, 4}}, {512, {4, 2, 2}}, {1024, {2, 2, 2}},
-        {2048, {2, 2, 2}}, {4096, {2, -1, -1}},
+        {2048, {2, 2, 2}}, {4096, {2, 2, 2}},
     };
     for (const std::size_t limit : {99 * 1024, 163 * 1024}) {
         for (const auto& test : cases) {
             for (int padding = 0; padding <= 2; ++padding) {
-                const int expected = fft2::detail::shared_bytes(test.length, 2, padding) > limit
-                    ? -1 : test.lanes[padding];
-                if (expected < 0) {
-                    expect_resource_error(test.length, 256, 0, padding, limit, 1);
-                } else {
+                int legacy = -1;
+                try {
+                    legacy = fft2::detail::choose_tile(test.length, 256, 0, padding, limit,
+                                                       "tile_cols", 0);
+                } catch (const std::runtime_error&) {}
+                const bool fallback = fft2::detail::shared_bytes(test.length, 2, padding) > limit;
+                const int expected = fallback ? legacy : test.lanes[padding];
+                try {
                     const int lanes = fft2::detail::choose_tile(test.length, 256, 0, padding, limit,
                                                                "tile_cols", 1);
                     assert(lanes == expected);
+                    assert(legacy > 0);
                     assert(fft2::detail::shared_bytes(test.length, lanes, padding) <= limit);
+                } catch (const std::runtime_error&) {
+                    // Policy 1 must never error where policy 0 succeeds.
+                    assert(legacy < 0);
+                    expect_resource_error(test.length, 256, 0, padding, limit, 1);
                 }
             }
         }
@@ -52,6 +60,8 @@ int main() {
         expect_resource_error(256, 2, 3, 0, 163 * 1024, policy);
     }
     assert(fft2::detail::choose_tile(4096, 256, 0, 0, 99 * 1024, "tile_rows", 0) == 1);
-    expect_resource_error(1024, 256, 0, 0, 32 * 1024 - 1, 1);
+    assert(fft2::detail::choose_tile(4096, 256, 0, 1, 163 * 1024, "tile_rows", 1) == 1);
+    assert(fft2::detail::choose_tile(2048, 256, 0, 2, 99 * 1024, "tile_rows", 1) == 1);
+    assert(fft2::detail::choose_tile(1024, 256, 0, 0, 32 * 1024 - 1, "tile_rows", 1) == 1);
     std::cout << "tile policy CPU checks PASS\n";
 }

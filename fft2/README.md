@@ -55,7 +55,7 @@ identifies all axes, the requested split/tiles, and either the actual plan/error
 or the skip/failure reason. Per-axis summaries and a final total follow. Any failure, API failure,
 or axis with no passing configurations makes the exit status nonzero. Shared
 memory is checked before allocation; only combinations that cannot fit the
-policy's minimum lanes (one for policy 0, two for policy 1), or the explicitly
+minimum one lane (both policies), or the explicitly
 requested widths, are skipped for that reason. Unexpected plan/CUDA errors
 fail the gate.
 
@@ -156,7 +156,7 @@ candidate.execute(device_input, device_output, stream);
 |---|---|---|
 | `index_mode` | `0` (default), `1` | **H9:** replacing runtime 64-bit division/remainder with u32 shift/mask may reduce integer instruction overhead. Mode 1 uses u32 for block-local indices and offsets within one transform, including cross-table indexing; the batch base/global address stays 64-bit. |
 | `smem_padding` | `0` (default), `1`, `2` | **H10:** changing the shared row stride from `lanes` to `lanes+padding` may reduce shared-memory bank conflicts. Each padding unit is one unused FP64 complex element per element-row, so allocation is `length*(lanes+padding)*16` bytes. |
-| `tile_policy` | `0` (default), `1` | **H13:** policy 0 keeps v1's largest fitting power-of-two width up to 8. Policy 1 chooses the largest power-of-two width bounded by the other dimension and 32 KiB (including padding), with at least two lanes. Explicit C/R override either policy independently. |
+| `tile_policy` | `0` (default), `1` | **H13:** policy 0 keeps v1's largest fitting power-of-two width up to 8. Policy 1 chooses the largest power-of-two width bounded by the other dimension and 32 KiB (including padding), with at least two lanes; if two lanes exceed the device limit, it uses policy 0's choice. Explicit C/R override either policy independently. |
 
 Each kernel is specialized at compile time for index mode and padding.
 Dispatch happens on the host once per launch; there are no mode/padding branches in hot loops.
@@ -188,9 +188,10 @@ accidental padding reads.
 
 Policy 1 stops shrinking at two lanes, even when that exceeds the 32 KiB
 target. If two lanes exceed the device opt-in limit, it uses the same resource
-error path as policy 0. For padding 0, lengths 256/512/1024/2048/4096 choose
-8/4/2/2/2 lanes on modeled A100 limits; L4 cannot fit the 4096-point two-lane
-tile. The CPU gate exercises the actual host planner without CUDA, plus
+tile choice as policy 0, including its error if one lane cannot fit.
+For padding 0, lengths 256/512/1024/2048/4096 choose 8/4/2/2/2 lanes on
+modeled A100 limits; L4 uses one lane for length 4096.
+The CPU gate exercises the actual host planner without CUDA, plus
 byte-for-byte policy comparisons in the CPU FFT model. GPU correctness and
 A100 batch-1/batched A/B remain required; policy 0 stays the default.
 

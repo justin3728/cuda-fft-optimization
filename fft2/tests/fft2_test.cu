@@ -153,9 +153,9 @@ bool shared_fits(size_t n, fft2::PlanOptions options, size_t limit) {
     for (size_t value = n; value > 1; value >>= 1) { ++log_n; }
     const size_t n1 = options.n1 == 0 ? size_t{1} << (log_n / 2) : static_cast<size_t>(options.n1);
     const size_t n2 = n / n1;
-    // Policy 1 requires at least two automatic lanes; explicit widths override
-    // either policy. Do not catch arbitrary plan/CUDA errors as skips.
-    const size_t minimum = options.tile_policy == 1 ? 2 : 1;
+    // Both automatic policies can fall back to one lane; explicit widths override.
+    // Do not catch arbitrary plan/CUDA errors as skips.
+    const size_t minimum = 1;
     const size_t cols = options.tile_cols == 0 ? minimum : static_cast<size_t>(options.tile_cols);
     const size_t rows = options.tile_rows == 0 ? minimum : static_cast<size_t>(options.tile_rows);
     return n1 * (cols + static_cast<size_t>(options.smem_padding)) * sizeof(cuDoubleComplex) <= limit

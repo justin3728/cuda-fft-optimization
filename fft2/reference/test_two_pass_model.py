@@ -131,10 +131,14 @@ def test_padding_can_make_even_one_lane_infeasible(limit, padding):
 ])
 def test_tile_policy_one_table(length, expected, limit):
     for padding, lanes in enumerate(expected):
-        if lanes is None or shared_bytes(length, 2, padding) > limit:
+        try:
+            legacy = choose_tile(length, 256, limit, padding=padding)
+        except ValueError:
             with pytest.raises(ValueError, match="shared-memory"):
                 choose_tile(length, 256, limit, padding=padding, tile_policy=1)
         else:
+            if shared_bytes(length, 2, padding) > limit:
+                lanes = legacy
             assert choose_tile(length, 256, limit, padding=padding, tile_policy=1) == lanes
 
 
@@ -149,8 +153,15 @@ def test_explicit_tiles_override_policy(policy):
 def test_tile_policy_one_dimension_and_minimum():
     assert choose_tile(256, 2, 163 * 1024, tile_policy=1) == 2
     assert choose_tile(64, 256, 163 * 1024, tile_policy=1) == 32
-    with pytest.raises(ValueError, match="shared-memory"):
-        choose_tile(1024, 256, 32 * 1024 - 1, tile_policy=1)
+    assert choose_tile(1024, 256, 32 * 1024 - 1, tile_policy=1) == 1
+
+
+@pytest.mark.parametrize("length,padding,limit", [
+    (4096, 1, 163 * 1024), (2048, 2, 99 * 1024),
+])
+def test_tile_policy_one_falls_back_to_legacy(length, padding, limit):
+    assert choose_tile(length, 256, limit, padding=padding, tile_policy=1) == \
+        choose_tile(length, 256, limit, padding=padding) == 1
 
 
 @pytest.mark.parametrize("n1,n2,batch", [(512, 256, 1), (256, 1024, 3), (2048, 256, 1)])

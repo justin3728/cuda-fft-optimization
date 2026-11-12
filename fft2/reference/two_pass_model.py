@@ -137,7 +137,7 @@ def block_fft(tile, padding=0, index_mode=0):
 
 
 def choose_tile(length, other_length, shared_limit, requested=0, padding=0, tile_policy=0):
-    """Same host tile policies as the CUDA plan, including the two-lane floor."""
+    """Same host tile policies as the CUDA plan, including the legacy fallback."""
     if tile_policy not in (0, 1):
         raise ValueError("tile_policy must be 0 or 1")
     if not _power_of_two(length) or not _power_of_two(other_length):
@@ -148,6 +148,8 @@ def choose_tile(length, other_length, shared_limit, requested=0, padding=0, tile
         if requested > other_length or shared_bytes(length, requested, padding) > shared_limit:
             raise ValueError("requested tile exceeds dimension or shared-memory limit")
         return requested
+    if tile_policy == 1 and shared_bytes(length, 2, padding) > shared_limit:
+        return choose_tile(length, other_length, shared_limit, requested, padding, 0)
     tile = other_length if tile_policy == 1 else min(8, other_length)
     budget = min(shared_limit, 32 * 1024) if tile_policy == 1 else shared_limit
     minimum = 2 if tile_policy == 1 else 0

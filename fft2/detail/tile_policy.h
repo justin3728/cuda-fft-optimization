@@ -22,6 +22,9 @@ inline int choose_tile(int length, int other_length, int requested, int padding,
     }
     int lanes = requested;
     if (requested == 0) {
+        if (policy == 1 && shared_bytes(length, 2, padding) > limit) {
+            return choose_tile(length, other_length, requested, padding, limit, name, 0);
+        }
         const std::size_t budget = policy == 1 ? std::min(limit, std::size_t{32 * 1024}) : limit;
         lanes = policy == 1 ? other_length : std::min(8, other_length);
         const int minimum = policy == 1 ? 2 : 0;

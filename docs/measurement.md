@@ -156,6 +156,9 @@ to 0, selecting the plan's device-dependent automatic policy.
 `--fft2-smem-padding P` accepts 0, 1 or 2 unused complex elements per shared
 row. Both default to 0 and are forwarded to every sweep worker and profile.
 Requested values form the stable CSV/NVTX name, e.g. `fft2[n1=1024,c=8,r=4]`.
+`--fft2-tile-policy P` accepts 0 or 1; `--fft2-radix-mode M` accepts 0, 1 or 2.
+Both default to 0. Nonzero values append `,tp=P` and `,rx=M`, after padding
+and before `,oop=1`.
 Nonzero index mode and padding append `,im=M` and `,pad=P`, in that order;
 out-of-place then adds `,oop=1` before the closing bracket. Zero values omit
 these suffixes, preserving existing labels such as `fft2[n1=0,c=0,r=0]`. Resolved
@@ -371,7 +374,8 @@ the final line may omit its newline. Optional `log2=20,21` selects sizes from
 the intersection with CLI `--log2`; optional `oop=0|1` chooses buffer mode.
 Without these fields a line uses all requested sizes and the CLI buffer mode
 (in-place by default). Optional `im=0|1` and `pad=0|1|2` select index mode and
-shared padding; each defaults to 0, so existing variant files keep their behavior.
+shared padding. Optional `tp=0|1` and `rx=0|1|2` select tile policy and register
+radix mode; each defaults to 0, so existing variant files keep their behavior.
 For example:
 
 ```text
@@ -390,7 +394,7 @@ use an auto-only file or reduce explicit tiles to fit the queried device limit.
 The default auto line adapts to both devices. The whole file's syntax, dimensions
 and duplicate configs are checked before commands execute; runtime plan creation
 checks device-specific tile limits. No file contents are evaluated as shell code.
-The duplicate key includes both `im` and `pad`: distinct choices can coexist,
+The duplicate key includes `im`, `pad`, `tp` and `rx`: distinct choices can coexist,
 while omitted fields and explicit zeros identify the same configuration. Numeric
 values are normalized, including leading zeros.
 
@@ -401,7 +405,7 @@ jobs. Profiles use each line's intersection with `--profile-log2` and profile
 batch modes. An empty profile intersection still permits a sweep.
 
 All final artifacts are contained in `results/<tag>/`: `variants.csv` maps
-requested configs to `variants/v001/`, etc., recording normalized `im` and `pad`
+requested configs to `variants/v001/`, etc., recording normalized `im`, `pad`, `tp` and `rx`
 alongside `n1,c,r,oop`; `variants/baseline/` and each worker
 retain raw CSVs, logs and profiler artifacts. Workers temporarily use unique
 `<tag>.baseline`/`<tag>.v001` tags, then move into that tree. Binary paths point

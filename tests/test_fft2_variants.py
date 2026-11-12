@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_variants_dry_run_has_one_build_and_the_expected_sweeps_and_profiles(bash, tmp_path):
     variants = tmp_path / "variants with spaces.txt"
-    variants.write_text("# comment\r\nn1=0 c=0 r=0\r\nn1=1024 c=8 r=4 log2=20 oop=1 im=1 pad=1",
+    variants.write_text("# comment\r\nn1=0 c=0 r=0\r\nn1=1024 c=8 r=4 log2=20 oop=1 im=1 pad=1 tp=1 rx=2",
                         encoding="utf-8", newline="")
     tag = "variants_dry_" + uuid.uuid4().hex
     command = [bash, "scripts/run_fft2_variants.sh", "--tag", tag, "--variants", str(variants),
@@ -35,6 +35,8 @@ def test_variants_dry_run_has_one_build_and_the_expected_sweeps_and_profiles(bas
         expected = "1" if cmd is sweeps[2] else "0"
         assert cmd[cmd.index("--fft2-index-mode") + 1] == expected
         assert cmd[cmd.index("--fft2-smem-padding") + 1] == expected
+        assert cmd[cmd.index("--fft2-tile-policy") + 1] == expected
+        assert cmd[cmd.index("--fft2-radix-mode") + 1] == ("2" if expected == "1" else "0")
     assert "--fft2-out-of-place" in sweeps[2]
     profiles = [cmd for cmd in commands if "scripts/run_ncu.sh" in cmd]
     assert len(profiles) == 3
@@ -43,6 +45,8 @@ def test_variants_dry_run_has_one_build_and_the_expected_sweeps_and_profiles(bas
         expected = "1" if cmd is profiles[2] else "0"
         assert cmd[cmd.index("--fft2-index-mode") + 1] == expected
         assert cmd[cmd.index("--fft2-smem-padding") + 1] == expected
+        assert cmd[cmd.index("--fft2-tile-policy") + 1] == expected
+        assert cmd[cmd.index("--fft2-radix-mode") + 1] == ("2" if expected == "1" else "0")
     assert "merge_variants.py" in result.stdout
     assert not any((ROOT / "results").glob(tag + "*"))
     without_ncu = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=True)
@@ -51,6 +55,11 @@ def test_variants_dry_run_has_one_build_and_the_expected_sweeps_and_profiles(bas
 
 
 @pytest.mark.parametrize("line", [
+    "n1=0 c=0 r=0 tp=2", "n1=0 c=0 r=0 rx=3",
+    "n1=0 c=0 r=0 tp=-1", "n1=0 c=0 r=0 rx=1,2",
+    "n1=0 c=0 r=0 tp=99999999999", "n1=0 c=0 r=0 rx=1 rx=2",
+    "n1=0 c=0 r=0\nn1=0 c=0 r=0 tp=0 rx=0",
+    "n1=0 c=0 r=0 tp=01 rx=02\nn1=0 c=0 r=0 tp=1 rx=2",
     "n1=0 c=0", "n1=0 c=0 r=0 junk=1", "n1=0 c=0 r=0 c=4", "n1=0 c=-1 r=0",
     "n1=0 c=99999999999 r=0", "n1=0 c=0 r=0 oop=2", "n1=1024 c=0 r=0 log2=16",
     "n1=0 c=0 r=0\nn1=0 c=0 r=0", "n1=0 c=0 r=0 log2=25",
@@ -106,7 +115,7 @@ def test_default_candidates_fit_documented_a100_budgets_and_cover_every_size(bas
 def test_variants_reuse_build_and_continue_after_a_worker_failure(bash, tmp_path, failing_worker):
     shutil.copytree(ROOT / "scripts", tmp_path / "scripts")
     variants = tmp_path / "variants.txt"
-    variants.write_text("n1=0 c=0 r=0\nn1=0 c=0 r=0 im=01 pad=01\nn1=0 c=0 r=0 pad=02\n", encoding="utf-8")
+    variants.write_text("n1=0 c=0 r=0\nn1=0 c=0 r=0 tp=01 rx=01\nn1=0 c=0 r=0 rx=02\n", encoding="utf-8")
     for name in ["collect_env.sh", "run_bwtest.sh", "run_analysis.sh"]:
         shell_file(tmp_path / "scripts" / name, f"echo {name} >> trace.txt")
     shell_file(tmp_path / "scripts/run_sweep.sh", '''
@@ -120,6 +129,8 @@ if impls == ['fft2']:
     label='fft2[n1=%s,c=%s,r=%s' % (args['--fft2-n1'], args['--fft2-tile-cols'], args['--fft2-tile-rows'])
     if args['--fft2-index-mode'] != '0': label+=',im='+args['--fft2-index-mode']
     if args['--fft2-smem-padding'] != '0': label+=',pad='+args['--fft2-smem-padding']
+    if args['--fft2-tile-policy'] != '0': label+=',tp='+args['--fft2-tile-policy']
+    if args['--fft2-radix-mode'] != '0': label+=',rx='+args['--fft2-radix-mode']
     impls=[label+']']
 path=Path('results')/tag/'sweep/raw.csv'
 path.parent.mkdir(parents=True)
@@ -148,16 +159,16 @@ PY
     assert len(rows) == 6
     assert len({row["impl"] for row in rows}) == 6
     manifest = read_csv(tmp_path / "results/variants/variants.csv")
-    assert [(row["im"], row["pad"]) for row in manifest] == [("0", "0"), ("1", "1"), ("0", "2")]
+    assert [(row["tp"], row["rx"]) for row in manifest] == [("0", "0"), ("1", "1"), ("0", "2")]
     assert {row["impl"] for row in rows if row["impl"].startswith("fft2[")} == {
-        "fft2[n1=0,c=0,r=0]", "fft2[n1=0,c=0,r=0,im=1,pad=1]", "fft2[n1=0,c=0,r=0,pad=2]"}
+        "fft2[n1=0,c=0,r=0]", "fft2[n1=0,c=0,r=0,tp=1,rx=1]", "fft2[n1=0,c=0,r=0,rx=2]"}
     assert (tmp_path / "results/variants/variants/baseline/sweep/raw.csv").exists()
     assert all((tmp_path / "results/variants" / row["path"] / "sweep/raw.csv").exists()
                for row in read_csv(tmp_path / "results/variants/variants.csv"))
     assert not (tmp_path / "results/variants.v001").exists()
 
 
-@pytest.mark.parametrize("flag", ["--fft2-index-mode", "--fft2-smem-padding"])
+@pytest.mark.parametrize("flag", ["--fft2-index-mode", "--fft2-smem-padding", "--fft2-tile-policy", "--fft2-radix-mode"])
 def test_variants_require_tuning_axes_in_file(bash, flag):
     result = subprocess.run([bash, "scripts/run_fft2_variants.sh", "--tag", "axes_in_file_dry", "--dry-run", flag, "1"],
                             cwd=ROOT, text=True, capture_output=True)

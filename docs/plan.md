@@ -1,7 +1,7 @@
 # 專案計畫與狀態（single source of truth）
 
 > 所有狀態以本檔為準，不依賴對話記憶。每次任務開始／結束、每次 A100 數據回來都要更新「目前狀態」與「任務看板」。
-> 最後更新：2026-11-11 晚（Codex 週額度重置前一次派出 T3/T2b/T4a/T4b/T5a；T1-fix-1 已由 Codex 推到 PR #1 @ dce6093，待 Claude 複審）
+> 最後更新：2026-11-12（T2 gate A100 通過，見 §7、L003）。前一次：2026-11-11 晚（Codex 週額度重置前一次派出 T3/T2b/T4a/T4b/T5a；T1-fix-1 已由 Codex 推到 PR #1 @ dce6093，待 Claude 複審）
 
 ## 1. 目標
 
@@ -77,7 +77,7 @@
 | ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
 | T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ 等 T1-fix-1 merge + A100 排得到 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
-| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 🔍 PR #2 已審（CUDA 13.5 sm_80/sm_89 零警告編譯、pytest 193 passed）；**L4 gate 通過**（28 passed / 0 failed / 1 skip，rel L2 ≤ 6.1e-16，每次 execute 2 kernels，`results/t2_gate_l4_20261111/`）；⏳ A100 gate |
+| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 🔍 PR #2 已審（CUDA 13.5 sm_80/sm_89 零警告編譯、pytest 193 passed）；**L4 gate 通過**（28 passed / 0 failed / 1 skip，rel L2 ≤ 6.1e-16，每次 execute 2 kernels，`results/t2_gate_l4_20261111/`）；**G4 正確性通過**（2026-11-12）；**A100 gate 通過**（2026-11-12，`results/t2_gate_a100_20261112/`）→ ⏳ 使用者 merge |
 | T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend + 變體 A/B 腳本（`docs/codex-tasks/T2b-bench-fft2-backend.md`，分支疊在 T1+T2 上） | Codex | 📤 2026-11-11 晚交給 Codex |
 | T3 CI | GitHub Actions：pytest、shellcheck、dry-run、CUDA 13 容器 compile-only（`docs/codex-tasks/T3-ci.md`；只動 `.github/`，目錄不存在時 skip） | Codex | 📤 2026-11-11 晚交給 Codex |
 | Harness | `scripts/colab/run.sh`：一次 GPU 執行的完整流程，失敗也自動 stop | Claude | ✅ 2026-11-11（CPU runtime 端到端測試） |
@@ -102,7 +102,10 @@
 - GPU 執行改走 Colab CLI（§8）。PR #1（T1）已審 + 在 L4 跑 quick 全通過；修正輪 T1-fix-1 已寫好。
 - T2（PR #2）L4 gate 通過（2026-11-11，`notebooks/t2_gate.ipynb` Run all）：正確性全過、2 kernels/execute；2^24 b1 pass1 讀取 1.32 趟（校正後）＝ L4 上 C=1 退化所致。
 - **2026-11-11 晚**：GPU 是瓶頸，先把不需 GPU 的工作全部派給 Codex（T3、T2b、T4a→T4b→T4c、T5a、T6、T7、T8；T3/T2b/T4a/T5a 已推上 PR #3/#7/#6/#5，分支／目錄互不重疊）。下次 A100 allocation 目標：T2 gate + T1 full + T4 變體 A/B 一次跑完。
-- **下一步（更新）**：A100 跑 `notebooks/t2_gate.ipynb` → 通過即 merge PR #2；調優第一項建議 = 內層 64-bit 除法改 32-bit/shift（待 A100 ncu 證實）。
+- **2026-11-12**：T2 gate 在 **A100-SXM4-40GB 通過**（使用者用另一個帳號連上，Colab UI Run all）。正確性 28/0/1，每次 execute 2 kernels，DRAM 讀 1.00 趟、寫 0.94–0.98 趟。另在 G4（sm_120）通過正確性。見 L003、`results/t2_gate_a100_20261112/`、`results/t2_gate_g4_20261112/`。
+- v1 在 A100 上 2^24 b1 合計 3.22 ms，等效頻寬只有 282–408 GB/s。ncu 顯示**佔用率被 shared memory 限在 12.5%**（每 SM 1 block）。
+- **下一步**：(1) 使用者 merge PR #2；(2) A100 跑 T1 full，拿實測頻寬上限與 cuFFT/VkFFT baseline；(3) 調優優先順序依 L003 重排，見該條目「下一步」，待使用者決定。
+- ~~下一步（2026-11-11 晚）：A100 跑 `notebooks/t2_gate.ipynb` → 通過即 merge PR #2；調優第一項建議 = 內層 64-bit 除法改 32-bit/shift（待 A100 ncu 證實）。~~
 - **下一步（舊）**：(1) T1-fix-1 已交給 Codex（推到 PR #1 分支）→ Claude 複審 → merge → A100 跑 T1 full；(2) 平行：T2 prompt 交給 Codex（新分支 `codex/t2-two-pass-v1`，只動 `fft2/`）→ Claude 在 L4/A100 跑 `fft2_test` 驗證正確性。
 
 ## 8. 決策紀錄
@@ -112,6 +115,7 @@
 | 2026-11-11 | 實作由 Codex 負責（使用者有 Codex 額度要用）；使用者貼 prompt | Claude 審 PR、分析數據 |
 | 2026-11-11 | **GPU 平台固定為 Google Colab A100**，正式數據只認 `A100-SXM4-40GB` | 與舊數據同型號。每次執行前 notebook 先 assert GPU 名稱，不符就中止、不量。曾評估 gputw.ai（只有 A100 80GB、NT$38.4/hr、當時無現貨），未採用 |
 | 2026-11-11 | **GPU 執行改走官方 Colab CLI**（`google-colab-cli` 0.7.5，裝在使用者的 WSL Ubuntu，`--auth oauth2`） | Claude 可自行 `colab new --gpu A100`、`colab upload/exec/download`、`colab stop`；使用者不必開瀏覽器或貼結果。開機前 Claude 先徵得同意；用完立即 stop。費率實測：L4 1.94 單元/hr。A100 當天兩次分配失敗（Bad Gateway / timeout），fallback L4 |
+| 2026-11-12 | **A100 難分配時，G4（RTX PRO 6000 Blackwell，sm_120）只用來驗正確性**，正式平台仍是 A100-SXM4-40GB；不改用 G4 當正式平台 | G4 的 FP64 很弱，FP64 FFT 在 G4 上推論為計算瓶頸，「% of 實測頻寬上限」的分析不成立。Colab 選單上的 H100 需升級方案，目前不可選。A100 連不到時可換帳號再試 |
 
 ### Colab CLI 操作備忘
 - 0.7.5 的 `colab ssh -s S -- CMD` 不可用；改用 `colab exec -s S -f script.py`（在 kernel 裡 `subprocess.Popen` 背景執行 shell 腳本），長任務以 `/content/<name>_done` 檔案輪詢完成。

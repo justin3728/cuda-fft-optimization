@@ -76,3 +76,29 @@
 - H8：L4 上只達 copy 上限的 41–47%（100–113 / 243 GB/s）。可能原因：L4 FP64 極弱、內層 64-bit 整數除法、A100 上的低 occupancy（每 block 128 KiB shared → 1 block/SM）。L4 數字不作結論。
 
 **下一步**：A100 跑同一個 notebook；通過 → merge PR #2 → 依 ncu 排調優（候選第一項：block_fft/載入迴圈的 64-bit `/`、`%` 改 32-bit shift）。
+
+---
+
+## L003 — 2026-11-12 — T2 2-pass v1 正確性 gate（**A100-SXM4-40GB**；另有 G4 正確性）（**草稿，待使用者審閱**）
+
+**來源**：PR #2 @ 87597e8，`notebooks/t2_gate.ipynb`（使用者在 Colab UI 執行 Run all，輸出貼回）。結果在 `results/t2_gate_a100_20261112/summary.md` 和 `results/t2_gate_g4_20261112/summary.md`。ncu 設定一律 `--clock-control none`，cache control 用預設值。
+
+**結果**
+- 正確性（A100）：28 passed / 0 failed / 1 skip（2^24 b8，測試自設的記憶體上限）。rel L2 4.5e-16–6.1e-16（門檻 1e-12）。
+- 正確性（G4，sm_120）：28 / 0 / 1，以 `-Werror` 零警告編譯。G4 只作正確性證據（plan §8，2026-11-12）。
+- 結構：A100 上兩組設定都是每次 execute 恰好 2 個 kernel。
+- 流量（A100 的 DRAM 校正尚未量，以原始比值計）：每個 kernel 讀 1.00 趟、寫 0.94–0.98 趟 → 「2 趟」結構成立，**沒有多餘流量**。
+- **H7 證實**：L4 上 2^24 b1 pass1 多讀的約 0.3 趟，在 A100 上消失（讀 1.00x，grid 2048 → C=2）。
+- 時間（2^24 b1）：pass1 1866.9 µs + pass2 1349.8 µs = 3.22 ms。等效頻寬 282 / 387 GB/s。2^22 b8 為 301 / 408 GB/s。
+- 佔用率（2^24 b1）：兩個 kernel 都是 shared memory 135.17 KB/block → **每 SM 1 block，理論 12.5%、實際 12.47–12.48%**。register 34–38/thread，本來可容 6 blocks。warp cycles per issued instruction 9.4–10.5。
+
+**解讀（推論，待證）**
+- H8 修正：v1 慢的主因推論是**佔用率太低、無法隱藏記憶體延遲**。每 SM 只有 8 warps，每個 scheduler 2 個 warp，每 ~10 cycle 才發出一個指令 → latency-bound。它不是頻寬瓶頸（約 20–25% of 規格 HBM；實測上限待 T1），也不是 FP64 瓶頸（約 0.63 TFLOP/s ≈ 規格的 6%）。
+- 旁證：G4 的 FP64 比 A100 弱很多，但同一設定時間幾乎一樣（G4 3.39 ms vs A100 3.22 ms）→ 時間不由 FP64 算力決定。
+- 若達到頻寬上限，2^24 b1 約 0.75–0.8 ms（以規格 1.55 TB/s 估），還有約 4 倍空間。上限數字待 T1 實測取代。
+- 64-bit 除法（H9）仍可能有影響，但在 12.5% 佔用率下，它很可能不是第一順位。
+
+**下一步（待使用者決定）**
+- 新假設 **H13**：降低每個 block 的 shared memory 用量（例如 data 改放 register、shared 只做交換用，或縮小 tile），讓每 SM ≥ 2–4 blocks，達成頻寬會明顯上升。目前 T4a–c 都沒有直接處理這一點。T4b（register radix）可能順帶降低 shared 需求，要看實作。
+- 建議：在 T4b 的驗收標準加入「shared memory/block 與 blocks/SM」，或另開一個 T4d 專門處理 H13。
+- A100 跑 T1 full，取得實測 HBM/L2 上限與 cuFFT/VkFFT baseline，「% of 上限」才有分母。

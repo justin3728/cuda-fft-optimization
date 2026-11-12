@@ -38,7 +38,7 @@ t1_parse() {
                 echo '  [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft,fft2]'
                 echo '  [--fft2-n1 0] [--fft2-tile-cols 0] [--fft2-tile-rows 0] [--fft2-out-of-place]'
                 echo '  [--fft2-index-mode 0|1] [--fft2-smem-padding 0|1|2] (default: 0)'
-                echo '  [--fft2-tile-policy 0|1] [--fft2-radix-mode 0|1|2] (default: 0)'
+                echo '  [--fft2-tile-policy 0|1] [--fft2-radix-mode -1|0|1|2] (default: 0; -1 = auto radix)'
                 echo '  [--fft2-twiddle-mode 0|1] [--fft2-cross-mode 0|1] (default: 0)'
                 echo '  [--trials 15] [--iters 20] [--verify-fftw]'
                 echo '  [--profile-log2 16,20,22,24] [--profile-batch-modes b1,t25]'
@@ -59,20 +59,26 @@ t1_parse() {
     [[ $batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ && $profile_batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ ]] || { echo 'Invalid batch modes' >&2; exit 2; }
     [[ $impls =~ ^(legacy|cufft|vkfft|fft2)(,(legacy|cufft|vkfft|fft2))*$ ]] || { echo 'Invalid implementation list' >&2; exit 2; }
     local value
-    for value in "$fft2_n1" "$fft2_tile_cols" "$fft2_tile_rows" "$fft2_index_mode" "$fft2_smem_padding" "$fft2_tile_policy" "$fft2_twiddle_mode" "$fft2_cross_mode" "$fft2_radix_mode"; do
+    for value in "$fft2_n1" "$fft2_tile_cols" "$fft2_tile_rows" "$fft2_index_mode" "$fft2_smem_padding" "$fft2_tile_policy" "$fft2_twiddle_mode" "$fft2_cross_mode"; do
         if ! [[ $value =~ ^[0-9]+$ ]] || ((${#value} > 10)) || ((10#$value > 2147483647)); then
             echo 'fft2 options must be nonnegative integers <= INT_MAX (0 = auto)' >&2; exit 2;
         fi
     done
     fft2_n1=$((10#$fft2_n1)); fft2_tile_cols=$((10#$fft2_tile_cols)); fft2_tile_rows=$((10#$fft2_tile_rows))
     fft2_index_mode=$((10#$fft2_index_mode)); fft2_smem_padding=$((10#$fft2_smem_padding))
-    fft2_tile_policy=$((10#$fft2_tile_policy)); fft2_radix_mode=$((10#$fft2_radix_mode))
+    fft2_tile_policy=$((10#$fft2_tile_policy))
+    if [[ $fft2_radix_mode != -1 ]]; then
+        [[ $fft2_radix_mode =~ ^[0-9]+$ && ${#fft2_radix_mode} -le 10 ]] || {
+            echo '--fft2-radix-mode must be -1, 0, 1 or 2' >&2; exit 2;
+        }
+        fft2_radix_mode=$((10#$fft2_radix_mode))
+    fi
     ((fft2_tile_policy <= 1)) || { echo '--fft2-tile-policy must be 0 or 1' >&2; exit 2; }
     fft2_twiddle_mode=$((10#$fft2_twiddle_mode))
     ((fft2_twiddle_mode <= 1)) || { echo '--fft2-twiddle-mode must be 0 or 1' >&2; exit 2; }
     fft2_cross_mode=$((10#$fft2_cross_mode))
     ((fft2_cross_mode <= 1)) || { echo '--fft2-cross-mode must be 0 or 1' >&2; exit 2; }
-    ((fft2_radix_mode <= 2)) || { echo '--fft2-radix-mode must be 0, 1 or 2' >&2; exit 2; }
+    ((fft2_radix_mode <= 2)) || { echo '--fft2-radix-mode must be -1, 0, 1 or 2' >&2; exit 2; }
     ((fft2_index_mode <= 1)) || { echo '--fft2-index-mode must be 0 or 1' >&2; exit 2; }
     ((fft2_smem_padding <= 2)) || { echo '--fft2-smem-padding must be 0, 1 or 2' >&2; exit 2; }
     [[ $trials =~ ^[1-9][0-9]*$ && $iters =~ ^[1-9][0-9]*$ ]] || { echo 'Trials/iters must be positive integers' >&2; exit 2; }
@@ -105,7 +111,8 @@ t1_fft2_name() {
     ((fft2_index_mode == 0)) || printf ',im=%s' "$fft2_index_mode"
     ((fft2_smem_padding == 0)) || printf ',pad=%s' "$fft2_smem_padding"
     ((fft2_tile_policy == 0)) || printf ',tp=%s' "$fft2_tile_policy"
-    ((fft2_radix_mode == 0)) || printf ',rx=%s' "$fft2_radix_mode"
+    if ((fft2_radix_mode == -1)); then printf ',rx=auto'
+    elif ((fft2_radix_mode != 0)); then printf ',rx=%s' "$fft2_radix_mode"; fi
     ((fft2_twiddle_mode == 0)) || printf ',tw=%s' "$fft2_twiddle_mode"
     ((fft2_cross_mode == 0)) || printf ',cx=%s' "$fft2_cross_mode"
     ((fft2_out_of_place == 0)) || printf ',oop=1'

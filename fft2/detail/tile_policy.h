@@ -8,6 +8,11 @@
 
 namespace fft2::detail {
 
+inline int resolve_radix(int mode, int length, int lanes, unsigned int threads) {
+    if (mode != -1) { return mode; }
+    return static_cast<std::size_t>(length) * lanes / 16 >= threads ? 2 : 1;
+}
+
 // Host-only planner: FP64 complex storage is two doubles, without CUDA headers.
 inline std::size_t shared_bytes(int length, int lanes, int padding, int twiddle_mode = 0) {
     return static_cast<std::size_t>(length) * (static_cast<std::size_t>(lanes) + static_cast<std::size_t>(padding)

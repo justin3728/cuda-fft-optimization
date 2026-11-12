@@ -17,7 +17,7 @@ while (($#)); do
         --help|-h)
             echo 'Usage: scripts/run_fft2_variants.sh --tag NEW_TAG [--variants FILE] [--ncu] [--dry-run]'
             echo 'Common sweep/profile options are accepted. Default: scripts/fft2_variants_default.txt.'
-            echo 'Lines: n1=K c=C r=R [log2=16,17,...] [oop=0|1] [im=0|1] [pad=0|1|2] [tp=0|1] [rx=0|1|2] [tw=0|1] [cx=0|1]; # starts a comment.'
+            echo 'Lines: n1=K c=C r=R [log2=16,17,...] [oop=0|1] [im=0|1] [pad=0|1|2] [tp=0|1] [rx=-1|0|1|2] [tw=0|1] [cx=0|1]; # starts a comment.'
             echo 'n1/c/r: 0 = auto; im/pad/tp/rx/tw/cx: default 0.'
             exit 0;;
         *) common_args+=("$1"); shift;;
@@ -51,12 +51,12 @@ while IFS= read -r line || [[ -n $line ]]; do
     read -r -a fields <<< "$line"
     declare -A parsed=()
     for field in "${fields[@]}"; do
-        [[ $field =~ ^(n1|c|r|oop|im|pad|tp|tw|cx|rx|log2)=([0-9,]+)$ ]] || {
+        [[ $field =~ ^(n1|c|r|oop|im|pad|tp|tw|cx|rx|log2)=([0-9,]+)$ || $field == rx=-1 ]] || {
             echo "Invalid variant field on line $line_number: $field" >&2; exit 2;
         }
-        key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+        key=${field%%=*} value=${field#*=}
         [[ -z ${parsed[$key]:-} ]] || { echo "Duplicate $key on line $line_number" >&2; exit 2; }
-        if [[ $key != log2 ]]; then
+        if [[ $key != log2 && ! ( $key == rx && $value == -1 ) ]]; then
             if ! [[ $value =~ ^[0-9]+$ ]] || ((${#value} > 10)) || ((10#$value > 2147483647)); then
                 echo "Invalid integer on line $line_number: $field" >&2; exit 2;
             fi
@@ -76,7 +76,7 @@ while IFS= read -r line || [[ -n $line ]]; do
     ((twiddle_mode <= 1)) || { echo "tw must be 0 or 1 on line $line_number" >&2; exit 2; }
     cross_mode=${parsed[cx]:-0}
     ((cross_mode <= 1)) || { echo "cx must be 0 or 1 on line $line_number" >&2; exit 2; }
-    ((radix_mode <= 2)) || { echo "rx must be 0, 1 or 2 on line $line_number" >&2; exit 2; }
+    ((radix_mode <= 2)) || { echo "rx must be -1, 0, 1 or 2 on line $line_number" >&2; exit 2; }
     ((index_mode <= 1)) || { echo "im must be 0 or 1 on line $line_number" >&2; exit 2; }
     ((smem_padding <= 2)) || { echo "pad must be 0, 1 or 2 on line $line_number" >&2; exit 2; }
     selected=''

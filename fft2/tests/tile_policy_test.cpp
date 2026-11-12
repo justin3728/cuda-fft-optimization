@@ -21,6 +21,25 @@ void expect_resource_error(int length, int other, int requested, int padding,
 }  // namespace
 
 int main() {
+    struct RadixCase { int length[2]; int lanes[2]; int expected[2]; };
+    const RadixCase radix_cases[] = {
+        {{256, 256}, {8, 8}, {1, 1}},
+        {{512, 1024}, {4, 4}, {1, 2}},
+        {{1024, 2048}, {2, 2}, {1, 2}},
+        {{2048, 1024}, {2, 2}, {2, 1}},
+        {{4096, 4096}, {1, 2}, {2, 2}},
+        {{256, 512}, {15, 8}, {1, 2}},
+        {{256, 256}, {16, 17}, {2, 2}},
+    };
+    for (const auto& test : radix_cases) {
+        for (int pass = 0; pass < 2; ++pass) {
+            assert(fft2::detail::resolve_radix(-1, test.length[pass], test.lanes[pass], 256)
+                   == test.expected[pass]);
+            for (int mode : {0, 1, 2}) {
+                assert(fft2::detail::resolve_radix(mode, test.length[pass], test.lanes[pass], 256) == mode);
+            }
+        }
+    }
     struct Case { int length; int lanes[3]; };
     const Case cases[] = {
         {256, {8, 4, 4}}, {512, {4, 2, 2}}, {1024, {2, 2, 2}},

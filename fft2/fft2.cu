@@ -1,4 +1,5 @@
 #include "fft2.h"
+#include "detail/tile_policy.h"
 
 #include <cuda_runtime.h>
 
@@ -16,6 +17,9 @@ namespace {
 
 constexpr unsigned int kThreads = 256;
 constexpr size_t kDefaultSharedLimit = 48 * 1024;
+static_assert(sizeof(cuDoubleComplex) == 2 * sizeof(double));
+using detail::choose_tile;
+using detail::shared_bytes;
 
 void check_cuda(cudaError_t status, const char* operation) {
     if (status != cudaSuccess) {
@@ -34,32 +38,6 @@ int integer_log2(size_t value) {
         ++exponent;
     }
     return exponent;
-}
-
-size_t shared_bytes(int length, int lanes, int padding) {
-    return static_cast<size_t>(length) * (static_cast<size_t>(lanes) + static_cast<size_t>(padding))
-           * sizeof(cuDoubleComplex);
-}
-
-int choose_tile(int length, int other_length, int requested, int padding, size_t limit, const char* name) {
-    if (requested < 0) {
-        throw std::runtime_error(std::string("fft2: ") + name + " must be nonnegative (0 = automatic)");
-    }
-    int lanes = requested == 0 ? std::min(8, other_length) : requested;
-    if (requested == 0) {
-        while (lanes > 0 && shared_bytes(length, lanes, padding) > limit) {
-            lanes /= 2;
-        }
-    }
-    if (lanes == 0 || lanes > other_length || shared_bytes(length, lanes, padding) > limit) {
-        std::ostringstream message;
-        message << "fft2: " << name << "=" << requested << " for length=" << length
-                << " exceeds the dimension or device opt-in shared-memory limit=" << limit
-                << " bytes (padding=" << padding << ", one FFT requires "
-                << shared_bytes(length, 1, padding) << " bytes)";
-        throw std::runtime_error(message.str());
-    }
-    return lanes;
 }
 
 // A buffer always releases on its allocation device, even if the caller changed
@@ -351,6 +329,7 @@ struct Plan::Impl {
     int log_cross_base;
     int index_mode;
     int smem_padding;
+    int tile_policy;
     int device = -1;
     size_t bytes;
     size_t shared1;
@@ -377,8 +356,12 @@ struct Plan::Impl {
         if (opts.smem_padding < 0 || opts.smem_padding > 2) {
             throw std::runtime_error("fft2: smem_padding must be 0, 1 or 2");
         }
+        if (opts.tile_policy < 0 || opts.tile_policy > 1) {
+            throw std::runtime_error("fft2: tile_policy must be 0 or 1");
+        }
         index_mode = opts.index_mode;
         smem_padding = opts.smem_padding;
+        tile_policy = opts.tile_policy;
         if (n > std::numeric_limits<size_t>::max() / static_cast<size_t>(batch)
             || n * static_cast<size_t>(batch) > std::numeric_limits<size_t>::max() / sizeof(cuDoubleComplex)) {
             throw std::runtime_error("fft2: N * batch byte count overflows size_t");
@@ -407,8 +390,8 @@ struct Plan::Impl {
             throw std::runtime_error("fft2: device reports no opt-in shared memory");
         }
         const size_t limit = static_cast<size_t>(optin_limit);
-        cols = choose_tile(n1, n2, opts.tile_cols, smem_padding, limit, "tile_cols");
-        rows = choose_tile(n2, n1, opts.tile_rows, smem_padding, limit, "tile_rows");
+        cols = choose_tile(n1, n2, opts.tile_cols, smem_padding, limit, "tile_cols", tile_policy);
+        rows = choose_tile(n2, n1, opts.tile_rows, smem_padding, limit, "tile_rows", tile_policy);
         log_cols = integer_log2(static_cast<size_t>(cols));
         log_rows = integer_log2(static_cast<size_t>(rows));
         shared1 = shared_bytes(n1, cols, smem_padding);
@@ -495,11 +478,12 @@ std::string Plan::describe() const {
     std::ostringstream output;
     output << "fft2 N=" << p.n << " batch=" << p.batch << " N1=" << p.n1 << " N2=" << p.n2
            << " index_mode=" << p.index_mode << " smem_padding=" << p.smem_padding
+           << " tile_policy=" << p.tile_policy
            << " C=" << p.cols << " R=" << p.rows << " workspace_bytes=" << p.bytes
            << " pass1{grid=(" << p.grid1.x << ',' << p.grid1.y << ',' << p.grid1.z
-           << "),block=(" << kThreads << ",1,1),smem_bytes=" << p.shared1 << "}"
+           << "),block=(" << kThreads << ",1,1),lanes=" << p.cols << ",smem_bytes=" << p.shared1 << "}"
            << " pass2{grid=(" << p.grid2.x << ',' << p.grid2.y << ',' << p.grid2.z
-           << "),block=(" << kThreads << ",1,1),smem_bytes=" << p.shared2 << "}";
+           << "),block=(" << kThreads << ",1,1),lanes=" << p.rows << ",smem_bytes=" << p.shared2 << "}";
     return output.str();
 }
 

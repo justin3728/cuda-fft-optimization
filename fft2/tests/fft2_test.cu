@@ -116,11 +116,11 @@ struct Counts {
 
 struct Summary {
     Counts total;
-    Counts axes[2][3];
+    Counts axes[2][3][2];
 
     void add(Outcome result, fft2::PlanOptions options) {
         total.add(result);
-        axes[options.index_mode][options.smem_padding].add(result);
+        axes[options.index_mode][options.smem_padding][options.tile_policy].add(result);
     }
 };
 
@@ -128,9 +128,12 @@ std::vector<fft2::PlanOptions> variants_for(fft2::PlanOptions options, bool vari
     std::vector<fft2::PlanOptions> result;
     for (int mode = 0; mode <= (variants ? 1 : 0); ++mode) {
         for (int padding = 0; padding <= (variants ? 2 : 0); ++padding) {
-            options.index_mode = mode;
-            options.smem_padding = padding;
-            result.push_back(options);
+            for (int policy = 0; policy <= (variants ? 1 : 0); ++policy) {
+                options.index_mode = mode;
+                options.smem_padding = padding;
+                options.tile_policy = policy;
+                result.push_back(options);
+            }
         }
     }
     return result;
@@ -140,7 +143,8 @@ std::string config_label(size_t n, int batch, fft2::PlanOptions options) {
     std::ostringstream label;
     label << "N=" << n << " batch=" << batch << " requested_N1=" << options.n1
           << " requested_C=" << options.tile_cols << " requested_R=" << options.tile_rows
-          << " index_mode=" << options.index_mode << " smem_padding=" << options.smem_padding;
+          << " index_mode=" << options.index_mode << " smem_padding=" << options.smem_padding
+          << " tile_policy=" << options.tile_policy;
     return label.str();
 }
 
@@ -149,10 +153,11 @@ bool shared_fits(size_t n, fft2::PlanOptions options, size_t limit) {
     for (size_t value = n; value > 1; value >>= 1) { ++log_n; }
     const size_t n1 = options.n1 == 0 ? size_t{1} << (log_n / 2) : static_cast<size_t>(options.n1);
     const size_t n2 = n / n1;
-    // Automatic selection can shrink as far as one lane; explicit widths must
-    // fit as requested. Do not catch arbitrary plan/CUDA errors as skips.
-    const size_t cols = options.tile_cols == 0 ? 1 : static_cast<size_t>(options.tile_cols);
-    const size_t rows = options.tile_rows == 0 ? 1 : static_cast<size_t>(options.tile_rows);
+    // Policy 1 requires at least two automatic lanes; explicit widths override
+    // either policy. Do not catch arbitrary plan/CUDA errors as skips.
+    const size_t minimum = options.tile_policy == 1 ? 2 : 1;
+    const size_t cols = options.tile_cols == 0 ? minimum : static_cast<size_t>(options.tile_cols);
+    const size_t rows = options.tile_rows == 0 ? minimum : static_cast<size_t>(options.tile_rows);
     return n1 * (cols + static_cast<size_t>(options.smem_padding)) * sizeof(cuDoubleComplex) <= limit
         && n2 * (rows + static_cast<size_t>(options.smem_padding)) * sizeof(cuDoubleComplex) <= limit;
 }
@@ -210,7 +215,7 @@ void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_
         DeviceBytes input(bytes);
         DeviceBytes output(bytes);
         // Generate input and execute cuFFT once per (N, batch, split/tile case),
-        // then reuse both across all six axes. Only one fft2 plan is live at a
+        // then reuse both across all variants. Only one fft2 plan is live at a
         // time, preserving the original device/host memory caps.
         std::vector<cuDoubleComplex> reference(count);
         std::mt19937_64 rng(static_cast<uint64_t>(n) + static_cast<uint64_t>(batch));
@@ -288,6 +293,10 @@ bool api_checks() {
             expect_error([padding] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, padding}); },
                          "invalid shared padding");
         }
+        for (int policy : {-1, 2}) {
+            expect_error([policy] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, policy}); },
+                         "invalid tile policy");
+        }
         fft2::Plan plan(size_t{1} << 16, 1);
         expect_error([&plan] { plan.execute(nullptr, nullptr, nullptr); }, "null input/output");
         std::cout << "API checks PASS\n";
@@ -329,7 +338,8 @@ int main(int argc, char** argv) {
                 if (argument == "--max-device-mib") { cap = value; } else { host_cap = value; }
             } else if (argument == "--help") {
                 std::cout << "usage: fft2_test [--variants] [--describe] [--max-device-mib 6144] [--max-host-mib 2048]\n"
-                          << "--variants tests index_mode={0,1} x smem_padding={0,1,2}, where shared memory fits.\n"
+                          << "--variants tests index_mode={0,1} x smem_padding={0,1,2} x tile_policy={0,1},"
+                          << " where shared memory fits.\n"
                           << "--describe prints batch=1 plans for every N, without executing FFTs.\n";
                 return 0;
             } else {
@@ -384,10 +394,13 @@ int main(int argc, char** argv) {
         bool all_axes_executed = true;
         for (int mode = 0; mode <= (variants ? 1 : 0); ++mode) {
             for (int padding = 0; padding <= (variants ? 2 : 0); ++padding) {
-                const Counts& axis = summary.axes[mode][padding];
-                std::cout << "VARIANT_SUMMARY index_mode=" << mode << " smem_padding=" << padding
-                          << " passed=" << axis.passed << " failed=" << axis.failed << " skipped=" << axis.skipped << '\n';
-                all_axes_executed = all_axes_executed && axis.passed != 0;
+                for (int policy = 0; policy <= (variants ? 1 : 0); ++policy) {
+                    const Counts& axis = summary.axes[mode][padding][policy];
+                    std::cout << "VARIANT_SUMMARY index_mode=" << mode << " smem_padding=" << padding
+                              << " tile_policy=" << policy << " passed=" << axis.passed
+                              << " failed=" << axis.failed << " skipped=" << axis.skipped << '\n';
+                    all_axes_executed = all_axes_executed && axis.passed != 0;
+                }
             }
         }
         std::cout << "SUMMARY passed=" << summary.total.passed << " failed=" << summary.total.failed

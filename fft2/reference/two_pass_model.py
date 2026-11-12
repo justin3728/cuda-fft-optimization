@@ -136,8 +136,10 @@ def block_fft(tile, padding=0, index_mode=0):
     return storage[positions]
 
 
-def choose_tile(length, other_length, shared_limit, requested=0, padding=0):
-    """Same policy as the CUDA plan; automatic widths are powers of two <= 8."""
+def choose_tile(length, other_length, shared_limit, requested=0, padding=0, tile_policy=0):
+    """Same host tile policies as the CUDA plan, including the two-lane floor."""
+    if tile_policy not in (0, 1):
+        raise ValueError("tile_policy must be 0 or 1")
     if not _power_of_two(length) or not _power_of_two(other_length):
         raise ValueError("tile dimensions must be powers of two")
     if shared_limit < 0 or requested < 0:
@@ -146,16 +148,20 @@ def choose_tile(length, other_length, shared_limit, requested=0, padding=0):
         if requested > other_length or shared_bytes(length, requested, padding) > shared_limit:
             raise ValueError("requested tile exceeds dimension or shared-memory limit")
         return requested
-    tile = min(8, other_length)
-    while tile and shared_bytes(length, tile, padding) > shared_limit:
+    tile = other_length if tile_policy == 1 else min(8, other_length)
+    budget = min(shared_limit, 32 * 1024) if tile_policy == 1 else shared_limit
+    minimum = 2 if tile_policy == 1 else 0
+    while tile > minimum and shared_bytes(length, tile, padding) > budget:
         tile //= 2
-    if not tile:
-        raise ValueError("one FFT exceeds the shared-memory limit")
+    if tile_policy == 1:
+        tile = max(2, tile)
+    if not tile or tile > other_length or shared_bytes(length, tile, padding) > shared_limit:
+        raise ValueError("automatic tile exceeds dimension or shared-memory limit")
     return tile
 
 
 def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 1024,
-                 index_mode=0, smem_padding=0):
+                 index_mode=0, smem_padding=0, tile_policy=0):
     """Execute both tiled passes for a vector or a (batch, N) array.
 
     Small N and asymmetric splits are permitted here to test the formulas;
@@ -171,8 +177,8 @@ def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 10
     if not _power_of_two(n1) or n1 <= 1 or n1 >= n or n % n1:
         raise ValueError("N1 must be a power-of-two factor strictly between 1 and N")
     n2 = n // n1
-    cols = choose_tile(n1, n2, shared_limit, tile_cols, smem_padding)
-    rows = choose_tile(n2, n1, shared_limit, tile_rows, smem_padding)
+    cols = choose_tile(n1, n2, shared_limit, tile_cols, smem_padding, tile_policy)
+    rows = choose_tile(n2, n1, shared_limit, tile_rows, smem_padding, tile_policy)
     cross = CrossTwiddles.build(n)
     data = np.ascontiguousarray(values).reshape(-1)
     batch = values.size // n

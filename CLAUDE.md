@@ -90,7 +90,7 @@ wsl -e bash -lc 'colab --auth oauth2 stop -s NAME'
   1. **Prepare before allocating.** Have the script ready and the branch pushed before `new`. Allocate only when you can start the job immediately.
   2. **Send scripts over ssh stdin** (`ssh colab-NAME 'cat > /content/x.sh' < x.sh`), then check the remote byte count (`wc -c`) against the local file.
   3. **Verify that the job actually started.** About 30 s after launch, the log must show progress (GPU name, commit hash). If the log is empty or the process is missing, fix it or `stop` right away.
-  4. **Poll for liveness, not only completion.** Each poll checks for the done-file **and** for log growth or the job's process. If neither has changed for about 10 minutes, investigate. If the job is dead, `stop` the runtime immediately.
+  4. **Poll for liveness, not only completion.** Each poll checks for the done-file **and** for log growth or the job's process. If neither has changed for about 10 minutes, investigate. If the job is dead, `stop` the runtime immediately. When you check the process with `pgrep -f` over ssh, bracket the first letter of the pattern (`"[r]un_fft2_variants"`); otherwise the ssh command line matches itself and the job always looks alive.
   5. **Stop as soon as the job ends:** download, `stop`, then analyze offline. Never leave a runtime up while you write analysis or wait on Codex.
   6. **Error path:** if anything fails (allocation, clone, build), `stop` first, then debug locally.
 - **SSH works (verified 2026-11-12; used for the L005 A100 run)** through `colab ssh --proxy-mode` as an OpenSSH ProxyCommand. A local `~/.ssh/config` entry maps `colab-NAME` to session `NAME`, user root.

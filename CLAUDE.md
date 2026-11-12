@@ -86,6 +86,13 @@ wsl -e bash -lc 'colab --auth oauth2 stop -s NAME'
 ```
 
 - **Ask the owner before allocating any runtime** (A100 or L4); **always `stop` right after** the results are downloaded. L4 ≈ 1.94 units/hr.
+- **No idle GPU time, ever.** A billed runtime that sits idle is wasted money. On 2026-11-12, an A100 sat idle for about 67 minutes because the uploaded script was 0 bytes and only a done-file was polled. Mandatory checklist:
+  1. **Prepare before allocating.** Have the script ready and the branch pushed before `new`. Allocate only when you can start the job immediately.
+  2. **Send scripts over ssh stdin** (`ssh colab-NAME 'cat > /content/x.sh' < x.sh`), then check the remote byte count (`wc -c`) against the local file.
+  3. **Verify that the job actually started.** About 30 s after launch, the log must show progress (GPU name, commit hash). If the log is empty or the process is missing, fix it or `stop` right away.
+  4. **Poll for liveness, not only completion.** Each poll checks for the done-file **and** for log growth or the job's process. If neither has changed for about 10 minutes, investigate. If the job is dead, `stop` the runtime immediately.
+  5. **Stop as soon as the job ends:** download, `stop`, then analyze offline. Never leave a runtime up while you write analysis or wait on Codex.
+  6. **Error path:** if anything fails (allocation, clone, build), `stop` first, then debug locally.
 - **SSH works (verified 2026-11-12; used for the L005 A100 run)** through `colab ssh --proxy-mode` as an OpenSSH ProxyCommand. A local `~/.ssh/config` entry maps `colab-NAME` to session `NAME`, user root.
   - Flow: `colab --auth oauth2 new -s NAME --gpu A100`, then `ssh -o BatchMode=yes colab-NAME 'CMD'`, then `colab --auth oauth2 stop -s NAME`.
   - The remote exit code comes back through ssh, and `git clone` of the public repo works on the runtime.

@@ -1,0 +1,12 @@
+impl,N,batch,batch_mode,cache_control,raw_csv,status,captured_kernels,expected_kernels,sampled,capture_limit,kernels_per_batch,impl_detail
+"legacy","1048576","1","b1","all","legacy_N1048576_b1_b1_cache_all.csv","ok","5","5","false","5","5",""
+"legacy","1048576","1","b1","none","legacy_N1048576_b1_b1_cache_none.csv","ok","5","5","false","5","5",""
+"cufft","1048576","1","b1","all","cufft_N1048576_b1_b1_cache_all.csv","ok","2","2","false","12","NA",""
+"cufft","1048576","1","b1","none","cufft_N1048576_b1_b1_cache_none.csv","ok","2","2","false","12","NA",""
+"vkfft","1048576","1","b1","all","vkfft_N1048576_b1_b1_cache_all.csv","ok","2","2","false","12","NA",""
+"vkfft","1048576","1","b1","none","vkfft_N1048576_b1_b1_cache_none.csv","ok","2","2","false","12","NA",""
+"fft2[n1=0,c=0,r=0]","1048576","1","b1","all","fft2[n1=0,c=0,r=0]_N1048576_b1_b1_cache_all.csv","ok","2","2","false","2","NA","fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=0 smem_padding=0 C=4 R=4 workspace_bytes=16777216 pass1{grid=(256,1,1),block=(256,1,1),smem_bytes=65536} pass2{grid=(256,1,1),block=(256,1,1),smem_bytes=65536}"
+"fft2[n1=0,c=0,r=0]","1048576","1","b1","none","fft2[n1=0,c=0,r=0]_N1048576_b1_b1_cache_none.csv","ok","2","2","false","2","NA","fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=0 smem_padding=0 C=4 R=4 workspace_bytes=16777216 pass1{grid=(256,1,1),block=(256,1,1),smem_bytes=65536} pass2{grid=(256,1,1),block=(256,1,1),smem_bytes=65536}"
+"bwcopy","0","0","WS4096","all","bwcopy_WS4096_cache_all.csv","ok","1","1","false","1","NA",""
+"bwcopy","0","0","WS16","all","bwcopy_WS16_cache_all.csv","ok","1","1","false","1","NA",""
+"bwcopy","0","0","WS16","none","bwcopy_WS16_cache_none.csv","ok","1","1","false","1","NA",""

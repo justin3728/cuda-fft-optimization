@@ -75,7 +75,7 @@
 | T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ✅ L4 上通過（2026-11-11）；A100 型號待首次正式執行確認 |
 | M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | ✅ 2026-11-12 merge（fix-1 @ dce6093 複審通過：pytest 55 passed、shellcheck 乾淨、full dry-run ncu 擷取上限 334 kernels）。L4 quick 冒煙見 `results/smoke_l4_20261111/`。注意：legacy N=2^16 每 batch 另有一次 D2D `cudaMemcpyAsync`（非 kernel，ncu 看不到），分析趟數時要補上 |
 | ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
-| T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ PR #1 已 merge，等 A100 |
+| T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ L4 冒煙通過（L004），等 A100 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
 | M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | ✅ PR #2 已 merge（L4/G4/A100 gate 通過，見 L003） |
 | T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend + 變體 A/B 腳本（`docs/codex-tasks/T2b-bench-fft2-backend.md`，分支疊在 T1+T2 上） | Codex | ✅ 2026-11-12 merge PR #7（pytest、shellcheck 過；full dry-run ncu 上限 352）。GPU 待確認：NVTX 跳脫、每次 2 kernels、oop 正確性。預設變體檔對 H13 覆蓋不足，A100 改用自訂 tile 清單 |
@@ -108,6 +108,7 @@
 - v1 在 A100 上 2^24 b1 合計 3.22 ms，等效頻寬只有 282–408 GB/s。ncu 顯示**佔用率被 shared memory 限在 12.5%**（每 SM 1 block）。
 - 2026-11-12：使用者把規劃安排交給 Claude（§8）。Codex 分支已推上：T1（含 fix-1）、T2b、T3、T4a、T5a、T6、T7、T8；T4b、T4c 尚未開始。
 - **2026-11-12（續）**：PR #1、#3、#7、#6、#5 全部審完並 merge 進 main（含整合修正 db09a7a）。新開 T2c、T5a-fix-1 兩個小修正 prompt。T6/T7/T8 分支有 commits 但沒開 PR。
+- **2026-11-12 L4 冒煙（L004）**：merge 後的工具全部在 GPU 上跑通（fft2_test --variants、T1 quick 含 fft2、變體 runner + ncu）。H13 縮小版顯示佔用率與合併存取有取捨，batched 最佳 k=4。使用 1.24 單位。下一步：A100（T1 full + H13 tile sweep，含 2^24 與 batched）。
 - **下一步（Claude 排定，依序）**
   1. merge PR #2（T2）。
   2. 審 + merge，依相依順序：PR #1 T1（複審 fix-1 @ dce6093）→ T3 CI → T2b（疊在 T1+T2 上）→ T4a → T6 → T5a / T7 / T8。每個審查發現就寫成修正 prompt 交給 Codex。

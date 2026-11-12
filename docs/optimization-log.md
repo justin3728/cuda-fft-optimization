@@ -102,3 +102,30 @@
 - 新假設 **H13**：降低每個 block 的 shared memory 用量（例如 data 改放 register、shared 只做交換用，或縮小 tile），讓每 SM ≥ 2–4 blocks，達成頻寬會明顯上升。目前 T4a–c 都沒有直接處理這一點。T4b（register radix）可能順帶降低 shared 需求，要看實作。
 - 建議：在 T4b 的驗收標準加入「shared memory/block 與 blocks/SM」，或另開一個 T4d 專門處理 H13。
 - A100 跑 T1 full，取得實測 HBM/L2 上限與 cuFFT/VkFFT baseline，「% of 上限」才有分母。
+
+## L004 — 2026-11-12 — 合併後工具冒煙測試 + H13 tile sweep 縮小版（Colab **L4**，非目標 GPU）（**草稿，待使用者審閱**）
+
+**來源**：main @ f20c70e（已 merge PR #1/#3/#5/#6/#7）。Claude 經 SSH 在 L4 執行，`CUDA_ARCH=sm_89`。精簡結果在 `results/smoke_t1_l4_quick_20261112/` 和 `results/smoke_h13_l4_20261112/`。ncu 設定為 `--clock-control none`、`--cache-control all`。**L4 數字只作冒煙測試，不是正式數據。**
+
+**工具驗證（全部通過）**
+- `fft2_test --variants`（T4a gate）：146 passed / 0 failed / 28 skipped，含編譯共 46 s。6 個變體軸都有覆蓋。
+- `run_t1_all.sh --quick`（含 fft2）：7 個階段全 OK，共約 2.7 min。fft2 sweep 列全部 `ok`，rel L2 ≤ 6.1e-16。
+- T2b 待 GPU 確認的項目：NVTX 跳脫可用，每個 fft2 設定恰好抓到 2 個 kernel；template kernel 名稱檢查（db09a7a）正常。
+- `run_fft2_variants.sh --ncu`：從頭到尾跑通，5 個變體 × 2 尺寸 × 2 batch 的 sweep 列全部 `ok`。
+- 待分析時處理：L2-resident 設定中，`pct_mixed_hbm_limit` 有 101–108%（legacy transpose、bwcopy）；`pct_l2_limit` 有 103–126%（cache none）。已知原因是 L2 延後寫回，以及 L2 上限只用 read plateau 估。正式判讀以 A100 為準。
+
+**H13 tile sweep（L4，auto split，C = R = k）**
+
+| N, batch | k=8（=auto） | k=4 | k=2 | k=1 |
+|---|---|---|---|---|
+| 2^18 b1，hot 中位數 | 229.4 µs | 156.8 | 132.7 | **118.4** |
+| 2^18 b128，hot 中位數 | 20.53 ms | **16.21** | 16.94 | 17.85 |
+| 2^16 b512，hot 中位數 | 14.74 ms | **14.54** | 15.30 | 16.88 |
+| 2^18 b1 ncu：smem/block、理論佔用率 | 64 KiB、16.7% | 32 KiB、50% | 16 KiB、83% | 8 KiB、100% |
+| 2^18 b1 ncu：pass1 + pass2 | 257.6 µs | 182.7 | 161.0 | 137.3 |
+
+**解讀（推論，待 A100 證實）**
+- 降低 shared memory 用量確實提高了佔用率，b1 時間也跟著下降，方向與 H13 一致。
+- 但 b1 的改善混了另一個因素：auto 在 2^18 b1 時，每個 pass 只有 64 個 block，L4 有 58 個 SM，連一個完整 wave 都填不滿。k=1 時有 512 個 block。所以 b1 的加速不能全部歸給佔用率。
+- batched（block 數夠多）時，最佳點在 k=4，不是 k=1。k=1 在 2^16 b512 時比 auto 慢 15%。推論：C 越小，pass1 每次跨行讀取的連續 bytes 越少（C=1 時只有 16 B），sector 利用率下降。**佔用率和合併存取之間有取捨**，所以 `tile_policy` 不能只追佔用率。
+- 因此 A100 tile sweep 必須涵蓋 2^24（DRAM-bound，auto C=2 → 1 block/SM）和 batched 設定，並看 DRAM sector 效率（例如 `dram__bytes_read` 對理想值的比例）。

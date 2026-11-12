@@ -1,16 +1,15 @@
 # 目前狀態（每個 session 先讀這份）
 
 > 只放「現在」：看板、下一步、待決事項。目標、架構、決策紀錄在 `docs/plan.md`；過去的流水帳在 `docs/history.md`。
-> 最後更新：2026-11-12（PR #9 合併；#8 審過待 L4 gate）
+> 最後更新：2026-11-12（PR #8、#11 經 L4 gate 合併；T4b 已派給 Codex）
 
 ## 任務看板（只列未完成或剛決定的；已完成的見 `docs/history.md`）
 
 | ID | 任務 | 負責 | 狀態 |
 |---|---|---|---|
 | T1-analysis | 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 趟數；證實或推翻 F5/F6 | Opus | ⏳ 數據已有（L005） |
-| T2c | bench 加 `--fft2-index-mode`、`--fft2-smem-padding`（`docs/codex-tasks/T2c-bench-fft2-variant-axes.md`） | Codex | ✅ 審過（approve with nits），⏳ 等 L4 gate 後合併（與 T4t 同一次 L4） |
-| T4t | `tile_policy=1`：每塊 shared ≤ 32 KiB 的最大 tile、至少 2 lanes（H13，依 L005 數據；`docs/codex-tasks/T4t-fft2-tile-policy.md`） | Codex | 📝 可派 |
-| T4b | register radix-8/16（H11），shared 只做一次交換（`docs/codex-tasks/T4b-fft2-register-radix.md`，已依 L005 改寫） | Codex | ⏸ 等 T4t 合併後派（同改 `fft2/fft2.cu`） |
+| T4t | `tile_policy=1`（H13）：每塊 shared ≤ 32 KiB 的最大 tile、至少 2 lanes，放不下時退回 policy 0 | Codex | ✅ PR #11 合併（L4 gate 292/0；預設仍是 0，A100 A/B 後再決定） |
+| T4b | register radix-8/16（H11），shared 只做一次交換（`docs/codex-tasks/T4b-fft2-register-radix.md`） | Codex | 🔨 2026-11-12 已用 `codex exec` 派出（effort high），分支 `codex/t4b-fft2-radix` |
 | T4c | twiddle 存取變體（H12），接在 T4b 之後 | Codex | ⏸ 等 T4b |
 | T4.x | A100 一次 allocation A/B 所有變體 → 依 ncu 定預設值 | Opus | ⏳ |
 | T5 | batched 調優、README 瓶頸分析與 before/after | Codex / Opus | ⏳ |
@@ -21,10 +20,16 @@
 
 ## 下一步（依序）
 
-1. PR #8（T2c）已審過，L4 gate 和 T4t 一起跑，通過就合併。（PR #9 T5a-fix-1 已於 2026-11-12 合併。）
-2. 使用者審閱 L003、L005 草稿措辭。
-3. 派 T4t（小，fft2 tile 規則）→ L4 gate → 合併 → 派 T4b。
-4. T4b 的 L4 gate 通過、合併後，才排下一次 A100（T4t、T4b、T2c 變體 A/B 一次跑完）。
+1. T4b 交回後：Codex 自我審查，然後 push、開 PR、跑 CI，再跑 L4 gate（`fft2_test --variants` 加上 ptxas 暫存器／spill 檢查）。
+2. 通過後開 A100，一次跑完 A/B：
+   - T4t：policy 0 vs 1，b1 和 batched；
+   - T4b：radix_mode 0/1/2；
+   - T2c：index_mode、smem_padding。
+   依結果寫 L006，並決定各項預設值。
+3. 使用者審閱 L003、L005 的措辭。
+4. 接著派 T4c（twiddle）。
+
+（已完成：PR #8 T2c、#9 T5a-fix-1、#11 T4t，皆於 2026-11-12 合併。L4 gate 用了 0.32 單位。）
 
 ## 待使用者決定
 

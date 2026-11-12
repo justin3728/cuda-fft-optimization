@@ -340,16 +340,15 @@ struct RegisterFFT {
 };
 
 // New I/O paths only: the old kernels retain their runtime shape and loops.
+__host__ __device__ constexpr int io_log_lanes(int lanes) { return lanes >= 8 ? 3 : lanes >= 4 ? 2 : lanes >= 2 ? 1 : 0; }
 template <int LogLength, int Bits, int Lanes, int Mode>
 struct RegisterIO : RegisterFFT<LogLength, Bits> {
     static constexpr int io_mode = Mode;
     static constexpr int length = 1 << LogLength;
-    static constexpr int log_lanes = Lanes >= 8 ? 3 : Lanes >= 4 ? 2 : Lanes >= 2 ? 1 : 0;
     static constexpr int first_bits = Mode == 2 ? Bits : 0;
     static constexpr int first_radix = 1 << first_bits;
     static constexpr int last_bits = Mode == 2 ? (LogLength - 1) % Bits + 1 : 0;
     static constexpr int last_radix = 1 << last_bits;
-    static constexpr int last_done = LogLength - last_bits;
     static constexpr int loads = (length * Lanes / first_radix + kThreads - 1) / kThreads;
     static constexpr int stores = (length * Lanes / last_radix + kThreads - 1) / kThreads;
 
@@ -411,9 +410,10 @@ struct RegisterIO : RegisterFFT<LogLength, Bits> {
         }
         __syncthreads();
         if constexpr (Mode == 1) {
-            RegisterFFT<LogLength, Bits>::template run<V>(shared, length, Lanes, LogLength, log_lanes, block_roots);
-        } else if constexpr (Bits < last_done) {
-            RegisterFFT<LogLength, Bits>::template stage<V, Bits, last_done>(shared, Lanes, log_lanes, block_roots);
+            RegisterFFT<LogLength, Bits>::template run<V>(shared, length, Lanes, LogLength, io_log_lanes(Lanes), block_roots);
+        } else if constexpr (Bits < LogLength - last_bits) {
+            RegisterFFT<LogLength, Bits>::template stage<V, Bits, LogLength - last_bits>(
+                shared, Lanes, io_log_lanes(Lanes), block_roots);
         }
         cuDoubleComplex result[stores][last_radix];
         // Read the entire output register set before any global store.

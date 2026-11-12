@@ -26,6 +26,10 @@ Planning was delegated to Claude on 2026-11-12 (`docs/plan.md` §8).
 4. Keep each PR under ~600 changed lines (excluding `results/`); split larger tasks.
 5. At most 2 Codex PRs open at once. Every task traces to a recorded hypothesis or a confirmed gap. To use Codex quota that would otherwise expire, pick small tasks from that list rather than speculative tooling.
 6. Book an A100 only when a batch of A/B comparisons is ready to run together.
+7. **A100 A/B cost control:**
+   - Time every variant at all sizes.
+   - Keep ncu on **every** variant, including the losers, because a failure needs its "why" too. But limit ncu to the representative sizes: 2^20 (L2-resident, judged by L2 metrics) and 2^24 (≫ L2, judged by HBM metrics).
+   - Re-time the library baselines (legacy, cuFFT, VkFFT) in the same allocation. Re-profile them with ncu only if the toolchain or GPU changed; otherwise cite the earlier log entry.
 
 ## Coding principles (Codex and Claude)
 Adapted from the Karpathy-inspired guidelines. They apply to every change in this repo.

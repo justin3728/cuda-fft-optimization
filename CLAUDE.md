@@ -41,7 +41,13 @@ Adapted from the Karpathy-inspired guidelines. They apply to every change in thi
 - Every prompt defines a **gate command**: one command run on the GPU whose exit code decides pass/fail (e.g. `fft2/fft2_test`, or `results/<tag>/stage_status.csv` all OK). Gate on Colab **L4 first** (cheap, correctness/compile), then **A100** only for performance. Batch several A100 experiments into one allocation.
 - Restrict each task to its own directories so parallel Codex tasks never touch the same files.
 - Keep a task spec to about one page: goal and hypothesis ID, allowed and forbidden paths, at most 4 deliverables, CPU gate command, GPU gate command with expected output files, a diff-size cap, and "no performance claims". `T2c-bench-fft2-variant-axes.md` is the model to follow.
-- **Direct dispatch (since 2026-11-12):** Claude runs `codex exec` (the CLI bundled with the Codex desktop app; same quota; local path in the operator's private notes) in a clean clone, with sandbox `workspace-write` and approval `never`. Codex implements and commits on its `codex/*` branch with no network access. Claude pushes, opens the PR, and reviews it. The owner no longer pastes prompts.
+- **Direct dispatch (since 2026-11-12):** Claude runs `codex exec` (the CLI bundled with the Codex desktop app; same quota; local path in the operator's private notes) in a clean clone, with sandbox `workspace-write` and approval `never`. Codex implements and commits on its `codex/*` branch with no network access; pass `--add-dir <clone>/.git` or the sandbox blocks commits. Claude pushes, opens the PR, and reviews it. The owner no longer pastes prompts.
+- **Review order (to spend Codex quota, not Claude's):**
+  1. Codex implements.
+  2. Claude runs `codex exec review` on the branch (effort medium) and feeds its findings back to Codex as a fix round.
+  3. CI runs.
+  4. Claude reads only Codex's review summary, the PR description, the gate results, and the diff stat. Claude opens the full diff only for kernel or measurement-method changes, or when something looks off.
+  5. GPU gate, then merge.
 - **Reasoning effort per task:** pass `-c model_reasoning_effort="..."` on each dispatch. This overrides the owner's config for that run only.
 
   | Task type | Effort | Examples |

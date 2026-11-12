@@ -1,0 +1,20 @@
+# Per-kernel profile
+
+| impl | impl_detail | N | batch | batch_mode | cache_control | kernel_id | kernel | grid | block | registers_per_thread | static_smem_bytes | dynamic_smem_bytes | smem_bytes | duration_us | pct_config_time | dram_read_bytes | dram_write_bytes | lts_bytes | dram_GBs | pct_measured_hbm_copy | l2_GBs | pct_measured_l2_copy | theoretical_occupancy_pct | achieved_occupancy_pct | shared_bank_conflicts_ld | shared_bank_conflicts_st | fp64_pipe_util_pct | stall_1 | stall_1_pct | stall_2 | stall_2_pct | stall_3 | stall_3_pct | pct_mixed_hbm_limit | pct_l2_limit | l2_limit_method | working_set_fits_l2 | sampled | captured_kernels | expected_kernels | sampling_ratio | extrapolation_factor |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fft2[n1=0,c=0,r=0,im=1,pad=1,tp=1,rx=2] | fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=1 smem_padding=1 tile_policy=1 radix_mode=2 C=2 R=2 workspace_bytes=16777216 pass1{grid=(512,1,1),block=(256,1,1),lanes=2,smem_bytes=49152} pass2{grid=(512,1,1),block=(256,1,1),lanes=2,smem_bytes=49152} | 1048576 | 1 | b1 | none | 46935:1:13:0 | unnamed>::pass1_columns<unnamed>::KernelVariant<1, 1, 1>, unnamed>::RegisterFFT<10, 4>> | (512, 1, 1) | (256, 1, 1) | 120 | 0 | 49152 | 49152 | 74.08 | 58.9959 | 1.67782e+07 | 1.74781e+07 | 8.63653e+07 | 462.424 | 33.9503 | 1165.84 | 43.3718 | 25 | 22.97 | 786957 | 1.0496e+06 | 18.42 | long_scoreboard | 56.15 | barrier | 17.38 | wait | 8.07 | 31.3116 | 41.544 | total_lts_bytes/read_plateau | True | False | 2 | 2 | 1 | 1 |
+| fft2[n1=0,c=0,r=0,im=1,pad=1,tp=1,rx=2] | fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=1 smem_padding=1 tile_policy=1 radix_mode=2 C=2 R=2 workspace_bytes=16777216 pass1{grid=(512,1,1),block=(256,1,1),lanes=2,smem_bytes=49152} pass2{grid=(512,1,1),block=(256,1,1),lanes=2,smem_bytes=49152} | 1048576 | 1 | b1 | none | 46935:1:13:1 | unnamed>::pass2_rows<unnamed>::KernelVariant<1, 1, 1>, unnamed>::RegisterFFT<10, 4>> | (512, 1, 1) | (256, 1, 1) | 120 | 0 | 49152 | 49152 | 51.488 | 41.0041 | 1.68097e+07 | 1.08433e+07 | 6.91039e+07 | 537.076 | 39.4311 | 1342.14 | 49.9304 | 25 | 22.46 | 787408 | 1.57379e+06 | 20.62 | long_scoreboard | 40.69 | barrier | 22.81 | wait | 9.56 | 36.4922 | 47.8263 | total_lts_bytes/read_plateau | True | False | 2 | 2 | 1 | 1 |
+
+DRAM bytes undercount traffic (writes deferred in L2); judge this config by L2 metrics.
+
+L2 limit method: total LTS bytes divided by the measured L2 read plateau; no read/write sector split is inferred.
+
+Complete capture: 2 kernel launches; totals are measured, not extrapolated.
+
+Config totals (raw traffic ratio = total DRAM bytes / (2 × 16 × N × batch); calibrated passes divide by the HBM copy traffic factor):
+
+| impl | impl_detail | N | batch | batch_mode | cache_control | kernel_count | total_time_us | total_dram_bytes | effective_memory_passes | dram_copy_traffic_factor | calibrated_memory_passes | working_set_fits_l2 | sampled | captured_kernels | expected_kernels | sampling_ratio | extrapolation_factor | totals_extrapolated | captured_time_us | captured_dram_bytes | captured_effective_memory_passes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fft2[n1=0,c=0,r=0,im=1,pad=1,tp=1,rx=2] | fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=1 smem_padding=1 tile_policy=1 radix_mode=2 C=2 R=2 workspace_bytes=16777216 pass1{grid=(512,1,1),block=(256,1,1),lanes=2,smem_bytes=49152} pass2{grid=(512,1,1),block=(256,1,1),lanes=2,smem_bytes=49152} | 1048576 | 1 | b1 | none | 2 | 125.568 | 6.19094e+07 | 1.84504 | 0.996683 | 1.85118 | True | False | 2 | 2 | 1 | 1 | False | 125.568 | 6.19094e+07 | 1.84504 |
+
+Legacy copy-normalized percentages are retained. pct_mixed_hbm_limit adds read/write service times at their separately measured peaks; pct_l2_limit uses the measured read plateau. NCU replay durations are distinct from unprofiled sweep times.

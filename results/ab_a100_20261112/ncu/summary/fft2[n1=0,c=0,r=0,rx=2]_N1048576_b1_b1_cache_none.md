@@ -1,0 +1,20 @@
+# Per-kernel profile
+
+| impl | impl_detail | N | batch | batch_mode | cache_control | kernel_id | kernel | grid | block | registers_per_thread | static_smem_bytes | dynamic_smem_bytes | smem_bytes | duration_us | pct_config_time | dram_read_bytes | dram_write_bytes | lts_bytes | dram_GBs | pct_measured_hbm_copy | l2_GBs | pct_measured_l2_copy | theoretical_occupancy_pct | achieved_occupancy_pct | shared_bank_conflicts_ld | shared_bank_conflicts_st | fp64_pipe_util_pct | stall_1 | stall_1_pct | stall_2 | stall_2_pct | stall_3 | stall_3_pct | pct_mixed_hbm_limit | pct_l2_limit | l2_limit_method | working_set_fits_l2 | sampled | captured_kernels | expected_kernels | sampling_ratio | extrapolation_factor |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fft2[n1=0,c=0,r=0,rx=2] | fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=0 smem_padding=0 tile_policy=0 radix_mode=2 C=8 R=8 workspace_bytes=16777216 pass1{grid=(128,1,1),block=(256,1,1),lanes=8,smem_bytes=131072} pass2{grid=(128,1,1),block=(256,1,1),lanes=8,smem_bytes=131072} | 1048576 | 1 | b1 | none | 38264:1:13:0 | unnamed>::pass1_columns<unnamed>::KernelVariant<0, 0, 1>, unnamed>::RegisterFFT<10, 4>> | (128, 1, 1) | (256, 1, 1) | 108 | 0 | 131072 | 131072 | 121.984 | 56.938 | 1.5306e+07 | 1.5451e+07 | 6.96155e+07 | 252.14 | 18.5116 | 570.693 | 21.2311 | 12.5 | 12.22 | 1539 | 2808 | 15.49 | long_scoreboard | 38.98 | wait | 29.2 | selected | 9.74 | 17.0768 | 20.3363 | total_lts_bytes/read_plateau | True | False | 2 | 2 | 1 | 1 |
+| fft2[n1=0,c=0,r=0,rx=2] | fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=0 smem_padding=0 tile_policy=0 radix_mode=2 C=8 R=8 workspace_bytes=16777216 pass1{grid=(128,1,1),block=(256,1,1),lanes=8,smem_bytes=131072} pass2{grid=(128,1,1),block=(256,1,1),lanes=8,smem_bytes=131072} | 1048576 | 1 | b1 | none | 38264:1:13:1 | unnamed>::pass2_rows<unnamed>::KernelVariant<0, 0, 1>, unnamed>::RegisterFFT<10, 4>> | (128, 1, 1) | (256, 1, 1) | 108 | 0 | 131072 | 131072 | 92.256 | 43.062 | 1.68137e+07 | 9.20998e+06 | 6.71689e+07 | 282.081 | 20.7098 | 728.071 | 27.0859 | 12.5 | 12.37 | 1667 | 923696 | 17.12 | long_scoreboard | 41.67 | wait | 26.04 | selected | 8.97 | 19.1876 | 25.9444 | total_lts_bytes/read_plateau | True | False | 2 | 2 | 1 | 1 |
+
+DRAM bytes undercount traffic (writes deferred in L2); judge this config by L2 metrics.
+
+L2 limit method: total LTS bytes divided by the measured L2 read plateau; no read/write sector split is inferred.
+
+Complete capture: 2 kernel launches; totals are measured, not extrapolated.
+
+Config totals (raw traffic ratio = total DRAM bytes / (2 × 16 × N × batch); calibrated passes divide by the HBM copy traffic factor):
+
+| impl | impl_detail | N | batch | batch_mode | cache_control | kernel_count | total_time_us | total_dram_bytes | effective_memory_passes | dram_copy_traffic_factor | calibrated_memory_passes | working_set_fits_l2 | sampled | captured_kernels | expected_kernels | sampling_ratio | extrapolation_factor | totals_extrapolated | captured_time_us | captured_dram_bytes | captured_effective_memory_passes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fft2[n1=0,c=0,r=0,rx=2] | fft2 N=1048576 batch=1 N1=1024 N2=1024 index_mode=0 smem_padding=0 tile_policy=0 radix_mode=2 C=8 R=8 workspace_bytes=16777216 pass1{grid=(128,1,1),block=(256,1,1),lanes=8,smem_bytes=131072} pass2{grid=(128,1,1),block=(256,1,1),lanes=8,smem_bytes=131072} | 1048576 | 1 | b1 | none | 2 | 214.24 | 5.67807e+07 | 1.6922 | 0.996683 | 1.69783 | True | False | 2 | 2 | 1 | 1 | False | 214.24 | 5.67807e+07 | 1.6922 |
+
+Legacy copy-normalized percentages are retained. pct_mixed_hbm_limit adds read/write service times at their separately measured peaks; pct_l2_limit uses the measured read plateau. NCU replay durations are distinct from unprofiled sweep times.

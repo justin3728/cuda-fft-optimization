@@ -1,39 +1,31 @@
 # 目前狀態（每個 session 先讀這份）
 
 > 只放「現在」：看板、下一步、待決事項。目標、架構、決策紀錄在 `docs/plan.md`；過去的流水帳在 `docs/history.md`。
-> 最後更新：2026-11-12（PR #8、#11 經 L4 gate 合併；T4b 已派給 Codex）
+> 最後更新：2026-11-12（A100 A/B 完成，L006 草稿；#12、#13 合併；T4c 第一輪 PR #14 在跑 L4 gate）
 
 ## 任務看板（只列未完成或剛決定的；已完成的見 `docs/history.md`）
 
 | ID | 任務 | 負責 | 狀態 |
 |---|---|---|---|
 | T1-analysis | 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 趟數；證實或推翻 F5/F6 | Opus | ⏳ 數據已有（L005） |
-| T4t | `tile_policy=1`（H13）：每塊 shared ≤ 32 KiB 的最大 tile、至少 2 lanes，放不下時退回 policy 0 | Codex | ✅ PR #11 合併（L4 gate 292/0；預設仍是 0，A100 A/B 後再決定） |
-| T4b | register radix-8/16（H11），shared 只做一次交換（`docs/codex-tasks/T4b-fft2-register-radix.md`） | Codex | 🔨 2026-11-12 已用 `codex exec` 派出（effort high），分支 `codex/t4b-fft2-radix` |
-| T2d | bench 和變體腳本加 `tp=`（tile_policy）、`rx=`（radix_mode），A100 A/B 需要（`docs/codex-tasks/T2d-bench-tile-policy-radix-axes.md`） | Codex | ⏸ T4b 合併後派（effort low） |
-| T4c | twiddle 存取變體（H12），接在 T4b 之後 | Codex | ⏸ 等 T4b |
-| T4.x | A100 一次 allocation A/B 所有變體 → 依 ncu 定預設值 | Opus | ⏳ |
+| T4c | twiddle_mode（roots 放 shared）、cross_mode（單一 N 表）（H12）。第 1 輪只動 `fft2/`；第 2 輪加 bench 軸 `tw=`/`cx=` | Codex | 🔨 PR #14：Codex 自審無問題，L4 gate 執行中。第 2 輪現在可派（#13 已合併） |
+| T4d | 新預設：tile_policy=1、依工作量自動選 radix（L·lanes/radix ≥ 256 → 16，否則 8）、padding 0（依 L006） | Codex | ⏸ T4c 合併後派（同樣改到 `fft2.cu` / `tile_policy.h`） |
+| H15 | 2^24 記憶體並行度：load 迴圈的 ILP，或 lanes=1 加 rx=2（L006） | Opus → Codex | ⏸ 先寫規格；和 T4c、T4d 一起上 A100 |
 | T5 | batched 調優、README 瓶頸分析與 before/after | Codex / Opus | ⏳ |
-| T6 | `scripts/a100_session.sh` | — | ✖ 關閉（2026-11-12）：L005 已直接用 SSH 跑完 A100，不需要這層包裝。分支 `codex/t6-a100-session` 保留不合併 |
-| T7 | `fft2/tools/plan_explorer.py`（不靠 GPU 預測 occupancy 等） | — | ⏸ 擱置：T4b 需要時再由 Opus 審分支 `codex/t7-plan-explorer` 決定去留 |
-| T8 | README 作品集骨架 | — | ⏸ 擱置：有 T4 數字後再 rebase 並開 PR（分支 `codex/t8-readme`） |
+| T7 | `fft2/tools/plan_explorer.py` | — | ⏸ 擱置（分支 `codex/t7-plan-explorer`） |
+| T8 | README 作品集骨架 | — | ⏸ 有 T4 數字後再 rebase 並開 PR（分支 `codex/t8-readme`） |
 | M1 檢查點 | 與使用者討論是否追 cuFFT | 全體 | ⏳ |
 
 ## 下一步（依序）
 
-1. T4b 交回後：Codex 自我審查，然後 push、開 PR、跑 CI，再跑 L4 gate（`fft2_test --variants` 加上 ptxas 暫存器／spill 檢查）。
-2. T2d（bench 加 tp/rx）→ L4 gate → 合併。
-3. 通過後開 A100，一次跑完 A/B：
-   - T4t：policy 0 vs 1，b1 和 batched；
-   - T4b：radix_mode 0/1/2；
-   - T2c：index_mode、smem_padding。
-   依結果寫 L006，並決定各項預設值。
-4. 使用者審閱 L003、L005 的措辭。
-5. 接著派 T4c（twiddle）。
+1. PR #14 L4 gate 通過後：派 T4c 第 2 輪（bench 軸），再跑 CI 與 L4 gate，然後合併。
+2. 派 T4d（新預設）；寫 H15 規格並派出。
+3. 三者都合併後開 A100，一次 A/B：T4c（tw/cx）、T4d 預設 vs v1、H15、index_mode 單獨一軸。依 CLAUDE.md PR 規則 7，ncu 只跑 2^20 和 2^24。
+4. 使用者審閱 L003、L005、L006 的措辭。
 
-（已完成：PR #8 T2c、#9 T5a-fix-1、#11 T4t，皆於 2026-11-12 合併。L4 gate 用了 0.32 單位。）
+（已完成，2026-11-12：PR #8 T2c、#9、#11 T4t、#12 T4b、#13 T2d 合併；A100 A/B 用了約 8.8 單位，其中約一半是空轉，原因是腳本上傳失敗，已訂規則防止。餘額 184.07。）
 
 ## 待使用者決定
 
-- L003、L005 結論措辭。
+- L003、L005、L006 結論措辭；L006 建議的預設值（T4d）。
 - batched 的定義（預設：N×batch 固定 2^25 個元素 = 512 MiB，另加 batch=8）。可調。

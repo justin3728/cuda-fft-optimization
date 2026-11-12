@@ -14,6 +14,35 @@ def _power_of_two(value):
     return isinstance(value, (int, np.integer)) and value > 0 and not value & (value - 1)
 
 
+def _validate_padding(padding):
+    if not isinstance(padding, (int, np.integer)) or padding not in (0, 1, 2):
+        raise ValueError("padding must be 0, 1 or 2")
+
+
+def shared_index(element, lane, lanes, padding=0):
+    """Physical complex-element offset, including unused cells in each row."""
+    _validate_padding(padding)
+    return np.asarray(element) * (lanes + padding) + np.asarray(lane)
+
+
+def shared_bytes(length, lanes, padding=0):
+    _validate_padding(padding)
+    return length * (lanes + padding) * np.dtype(np.complex128).itemsize
+
+
+def split_index(flat, divisor, index_mode=0):
+    """CUDA's quotient/remainder, including the arbitrary-lane u32 fallback."""
+    if index_mode not in (0, 1):
+        raise ValueError("index_mode must be 0 or 1")
+    if index_mode == 0:
+        return np.divmod(flat, divisor)
+    values = np.asarray(flat, dtype=np.uint32)
+    if _power_of_two(divisor):
+        shift = np.uint32(int(divisor).bit_length() - 1)
+        return values >> shift, values & np.uint32(divisor - 1)
+    return np.divmod(values, np.uint32(divisor))
+
+
 def twiddle_table(length, exponents):
     """Host table: reduce integer exponents before forming long-double angles."""
     exponents = np.asarray(exponents, dtype=np.uint64) % np.uint64(length)
@@ -41,11 +70,19 @@ class CrossTwiddles:
         high = twiddle_table(n, np.arange(n // base, dtype=np.uint64) * np.uint64(base))
         return cls(n, base, low, high)
 
-    def lookup(self, n2, k1):
+    def lookup(self, n2, k1, index_mode=0):
         # CUDA uses uint64_t multiplication and modulo before hi/lo lookup.
         exponent = (np.asarray(n2, dtype=np.uint64) * np.asarray(k1, dtype=np.uint64))
-        exponent %= np.uint64(self.n)
-        return self.high[exponent // np.uint64(self.base)] * self.low[exponent % np.uint64(self.base)]
+        if index_mode == 1:
+            # Production factors imply n2*k1 < N <= 2^24. Do not silently
+            # wrap the large synthetic products used to test mode 0.
+            if np.any(exponent >= 1 << 32):
+                raise ValueError("u32 cross product exceeds the production index range")
+            exponent = exponent.astype(np.uint32) & np.uint32(self.n - 1)
+        else:
+            exponent %= np.uint64(self.n)
+        high, low = split_index(exponent, self.base, index_mode)
+        return self.high[high] * self.low[low]
 
 
 def bit_reverse_indices(length):
@@ -59,60 +96,66 @@ def bit_reverse_indices(length):
     return reverse.astype(np.intp)
 
 
-def block_fft(tile):
+def block_fft(tile, padding=0, index_mode=0):
     """FFT along axis 0 of shared[element, lane], with CUDA's stage formulas."""
-    length, _ = tile.shape
-    shared = np.empty_like(tile)
-    shared[bit_reverse_indices(length), :] = tile
+    length, lanes = tile.shape
+    # Poison unused padding. Every load/store uses the physical CUDA layout;
+    # an accidental padding read propagates NaN into the numerical gate.
+    storage = np.full(shared_bytes(length, lanes, padding) // 16, complex(np.nan, np.nan))
+    lane = np.arange(lanes)
+    positions = shared_index(np.arange(length)[:, None], lane, lanes, padding)
+    reversed_positions = shared_index(bit_reverse_indices(length)[:, None], lane, lanes, padding)
+    storage[reversed_positions] = tile
     roots = twiddle_table(length, np.arange(length, dtype=np.uint64))
     span = 4
     while span <= length:
         quarter = span // 4
         # CUDA: butterfly = flat / lanes; lane = flat % lanes;
         # j = butterfly % quarter; start = (butterfly / quarter) * span + j.
-        j = np.arange(quarter, dtype=np.intp)
-        start = (np.arange(length // span)[:, None] * span + j).reshape(-1)
-        exponent = np.tile(j * (length // span), length // span)
+        group, j = split_index(np.arange(length // 4), quarter, index_mode)
+        start = group * span + j
+        exponent = j * (length // span)
         w1 = roots[exponent, None]
         w2 = roots[2 * exponent, None]
-        a0 = shared[start].copy()
-        a1 = shared[start + quarter] * w2
-        a2 = shared[start + 2 * quarter].copy()
-        a3 = shared[start + 3 * quarter] * w2
+        a0 = storage[positions[start]]
+        a1 = storage[positions[start + quarter]] * w2
+        a2 = storage[positions[start + 2 * quarter]]
+        a3 = storage[positions[start + 3 * quarter]] * w2
         u0, u1 = a0 + a1, a0 - a1
         u2, u3 = (a2 + a3) * w1, (a2 - a3) * w1 * (-1j)
-        shared[start] = u0 + u2
-        shared[start + quarter] = u1 + u3
-        shared[start + 2 * quarter] = u0 - u2
-        shared[start + 3 * quarter] = u1 - u3
+        storage[positions[start]] = u0 + u2
+        storage[positions[start + quarter]] = u1 + u3
+        storage[positions[start + 2 * quarter]] = u0 - u2
+        storage[positions[start + 3 * quarter]] = u1 - u3
         span *= 4  # CUDA block barrier between stages.
     if (int(length).bit_length() - 1) & 1:
         half = length // 2
-        a = shared[:half].copy()
-        b = shared[half:] * roots[:half, None]
-        shared[:half], shared[half:] = a + b, a - b
-    return shared
+        a = storage[positions[:half]]
+        b = storage[positions[half:]] * roots[:half, None]
+        storage[positions[:half]], storage[positions[half:]] = a + b, a - b
+    return storage[positions]
 
 
-def choose_tile(length, other_length, shared_limit, requested=0):
+def choose_tile(length, other_length, shared_limit, requested=0, padding=0):
     """Same policy as the CUDA plan; automatic widths are powers of two <= 8."""
     if not _power_of_two(length) or not _power_of_two(other_length):
         raise ValueError("tile dimensions must be powers of two")
     if shared_limit < 0 or requested < 0:
         raise ValueError("shared-memory limit and requested tile must be nonnegative")
     if requested:
-        if requested > other_length or length * requested * 16 > shared_limit:
+        if requested > other_length or shared_bytes(length, requested, padding) > shared_limit:
             raise ValueError("requested tile exceeds dimension or shared-memory limit")
         return requested
     tile = min(8, other_length)
-    while tile and length * tile * 16 > shared_limit:
+    while tile and shared_bytes(length, tile, padding) > shared_limit:
         tile //= 2
     if not tile:
         raise ValueError("one FFT exceeds the shared-memory limit")
     return tile
 
 
-def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 1024):
+def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 1024,
+                 index_mode=0, smem_padding=0):
     """Execute both tiled passes for a vector or a (batch, N) array.
 
     Small N and asymmetric splits are permitted here to test the formulas;
@@ -128,8 +171,8 @@ def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 10
     if not _power_of_two(n1) or n1 <= 1 or n1 >= n or n % n1:
         raise ValueError("N1 must be a power-of-two factor strictly between 1 and N")
     n2 = n // n1
-    cols = choose_tile(n1, n2, shared_limit, tile_cols)
-    rows = choose_tile(n2, n1, shared_limit, tile_rows)
+    cols = choose_tile(n1, n2, shared_limit, tile_cols, smem_padding)
+    rows = choose_tile(n2, n1, shared_limit, tile_rows, smem_padding)
     cross = CrossTwiddles.build(n)
     data = np.ascontiguousarray(values).reshape(-1)
     batch = values.size // n
@@ -137,31 +180,31 @@ def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 10
     output = np.empty_like(data)
 
     for batch_index in range(batch):  # CUDA encodes this in grid.y/grid.z.
-        base = batch_index * n
+        base = np.uint64(batch_index * n) if index_mode == 1 else batch_index * n
         for first_col in range(0, n2, cols):
             # Pass 1 flat = element * C + lane: adjacent columns per row.
-            element, lane = np.divmod(np.arange(n1 * cols), cols)
+            element, lane = split_index(np.arange(n1 * cols), cols, index_mode)
             n2_index = first_col + lane
             active = n2_index < n2
             offsets = base + element[active] * n2 + n2_index[active]
             tile = np.zeros((n1, cols), dtype=np.complex128)
             tile.reshape(-1)[active] = data[offsets]
-            transformed = block_fft(tile)
+            transformed = block_fft(tile, smem_padding, index_mode)
             # Same shared layout, now element == k1.
             k1 = element[active]
-            result = transformed.reshape(-1)[active] * cross.lookup(n2_index[active], k1)
+            result = transformed.reshape(-1)[active] * cross.lookup(n2_index[active], k1, index_mode)
             workspace[base + k1 * n2 + n2_index[active]] = result
 
         for first_row in range(0, n1, rows):
             # Pass 2 LOAD flat = lane * N2 + n2: contiguous input rows.
-            lane, element = np.divmod(np.arange(rows * n2), n2)
+            lane, element = split_index(np.arange(rows * n2), n2, index_mode)
             k1 = first_row + lane
             active = k1 < n1
             tile = np.zeros((n2, rows), dtype=np.complex128)
             tile[element[active], lane[active]] = workspace[base + k1[active] * n2 + element[active]]
-            transformed = block_fft(tile)
+            transformed = block_fft(tile, smem_padding, index_mode)
             # Pass 2 STORE flat = k2 * R + lane: adjacent output k1's.
-            k2, lane = np.divmod(np.arange(n2 * rows), rows)
+            k2, lane = split_index(np.arange(n2 * rows), rows, index_mode)
             k1 = first_row + lane
             active = k1 < n1
             output[base + k1[active] + n1 * k2[active]] = transformed.reshape(-1)[active]

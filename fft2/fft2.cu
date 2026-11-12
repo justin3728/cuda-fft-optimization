@@ -8,6 +8,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace fft2 {
@@ -15,9 +16,6 @@ namespace {
 
 constexpr unsigned int kThreads = 256;
 constexpr size_t kDefaultSharedLimit = 48 * 1024;
-// Padding hook: shared[element * (lanes + padding) + lane]. If changed, both
-// shared_index() and shared_bytes() use it. The reference uses padding == 0.
-constexpr size_t kSharedPadding = 0;
 
 void check_cuda(cudaError_t status, const char* operation) {
     if (status != cudaSuccess) {
@@ -38,26 +36,27 @@ int integer_log2(size_t value) {
     return exponent;
 }
 
-size_t shared_bytes(int length, int lanes) {
-    return static_cast<size_t>(length) * (static_cast<size_t>(lanes) + kSharedPadding)
+size_t shared_bytes(int length, int lanes, int padding) {
+    return static_cast<size_t>(length) * (static_cast<size_t>(lanes) + static_cast<size_t>(padding))
            * sizeof(cuDoubleComplex);
 }
 
-int choose_tile(int length, int other_length, int requested, size_t limit, const char* name) {
+int choose_tile(int length, int other_length, int requested, int padding, size_t limit, const char* name) {
     if (requested < 0) {
         throw std::runtime_error(std::string("fft2: ") + name + " must be nonnegative (0 = automatic)");
     }
     int lanes = requested == 0 ? std::min(8, other_length) : requested;
     if (requested == 0) {
-        while (lanes > 0 && shared_bytes(length, lanes) > limit) {
+        while (lanes > 0 && shared_bytes(length, lanes, padding) > limit) {
             lanes /= 2;
         }
     }
-    if (lanes == 0 || lanes > other_length || shared_bytes(length, lanes) > limit) {
+    if (lanes == 0 || lanes > other_length || shared_bytes(length, lanes, padding) > limit) {
         std::ostringstream message;
         message << "fft2: " << name << "=" << requested << " for length=" << length
                 << " exceeds the dimension or device opt-in shared-memory limit=" << limit
-                << " bytes (one FFT requires " << shared_bytes(length, 1) << " bytes)";
+                << " bytes (padding=" << padding << ", one FFT requires "
+                << shared_bytes(length, 1, padding) << " bytes)";
         throw std::runtime_error(message.str());
     }
     return lanes;
@@ -116,8 +115,65 @@ std::vector<cuDoubleComplex> make_table(size_t period, size_t count, size_t step
     return result;
 }
 
-__device__ __forceinline__ size_t shared_index(size_t element, size_t lane, int lanes) {
-    return element * (static_cast<size_t>(lanes) + kSharedPadding) + lane;
+// Both axes and the arbitrary-width fallback are compile-time choices. Mode 0
+// retains v1's size_t expressions and floating-point operation order. In mode 1
+// every offset within one transform fits uint32_t (N <= 2^24); only the batch
+// base/global address needs size_t. Explicit non-power-of-two tile widths keep
+// working through a separately instantiated u32 division/remainder path.
+template <int Mode, int Padding, bool PowerTwoLanes = true>
+struct KernelVariant {
+    using Index = std::conditional_t<Mode == 0, size_t, uint32_t>;
+
+    __device__ static __forceinline__ Index quotient(Index value, Index divisor, int log_divisor) {
+        if constexpr (Mode == 1) { return value >> log_divisor; }
+        else { return value / divisor; }
+    }
+
+    __device__ static __forceinline__ Index remainder(Index value, Index divisor) {
+        if constexpr (Mode == 1) { return value & (divisor - 1); }
+        else { return value % divisor; }
+    }
+
+    __device__ static __forceinline__ Index lane_quotient(Index value, Index lanes, int log_lanes) {
+        if constexpr (Mode == 1 && !PowerTwoLanes) { return value / lanes; }
+        else { return quotient(value, lanes, log_lanes); }
+    }
+
+    __device__ static __forceinline__ Index lane_remainder(Index value, Index lanes) {
+        if constexpr (Mode == 1 && !PowerTwoLanes) { return value % lanes; }
+        else { return remainder(value, lanes); }
+    }
+
+    __device__ static __forceinline__ Index shared_index(Index element, Index lane, int lanes) {
+        return element * (static_cast<Index>(lanes) + static_cast<Index>(Padding)) + lane;
+    }
+};
+
+template <int Mode, int Padding, typename Action>
+void dispatch_width(int lanes, const Action& action) {
+    if constexpr (Mode == 0) {
+        action(KernelVariant<Mode, Padding>{});
+    } else if (power_of_two(static_cast<size_t>(lanes))) {
+        action(KernelVariant<Mode, Padding>{});
+    } else {
+        action(KernelVariant<Mode, Padding, false>{});
+    }
+}
+
+template <int Mode, typename Action>
+void dispatch_padding(int padding, int lanes, const Action& action) {
+    switch (padding) {
+        case 0: dispatch_width<Mode, 0>(lanes, action); break;
+        case 1: dispatch_width<Mode, 1>(lanes, action); break;
+        case 2: dispatch_width<Mode, 2>(lanes, action); break;
+        default: throw std::runtime_error("fft2: smem_padding must be 0, 1 or 2");
+    }
+}
+
+template <typename Action>
+void dispatch_variant(int mode, int padding, int lanes, const Action& action) {
+    if (mode == 0) { dispatch_padding<0>(padding, lanes, action); }
+    else { dispatch_padding<1>(padding, lanes, action); }
 }
 
 __device__ __forceinline__ cuDoubleComplex add(cuDoubleComplex a, cuDoubleComplex b) {
@@ -132,67 +188,74 @@ __device__ __forceinline__ cuDoubleComplex mul(cuDoubleComplex a, cuDoubleComple
     return make_cuDoubleComplex(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
 
-__device__ __forceinline__ cuDoubleComplex read_twiddle(const cuDoubleComplex* table, size_t index) {
+template <typename Index>
+__device__ __forceinline__ cuDoubleComplex read_twiddle(const cuDoubleComplex* table, Index index) {
     return make_cuDoubleComplex(__ldg(&table[index].x), __ldg(&table[index].y));
 }
 
-__device__ __forceinline__ size_t reverse_index(size_t index, int log_length) {
-    return static_cast<size_t>(__brev(static_cast<unsigned int>(index)) >> (32 - log_length));
+template <typename Index>
+__device__ __forceinline__ Index reverse_index(Index index, int log_length) {
+    return static_cast<Index>(__brev(static_cast<unsigned int>(index)) >> (32 - log_length));
 }
 
 // On entry shared[element, lane] already contains bit-reversed input.
 // Each thread holds four values and fuses two radix-2 DIT stages into one
 // radix-4 stage. Butterfly sets are disjoint; a block barrier follows each stage.
 // Formulas are independently exercised by reference.block_fft().
-__device__ void block_fft(cuDoubleComplex* shared, int length, int lanes, int log_length,
+template <typename V>
+__device__ void block_fft(cuDoubleComplex* shared, int length, int lanes, int log_length, int log_lanes,
                           const cuDoubleComplex* roots) {
-    const size_t width = static_cast<size_t>(lanes);
-    const size_t fft_length = static_cast<size_t>(length);
-    for (size_t span = 4; span <= fft_length; span *= 4) {
-        const size_t quarter = span / 4;
-        const size_t count = (fft_length / 4) * width;
-        for (size_t flat = threadIdx.x; flat < count; flat += blockDim.x) {
-            const size_t butterfly = flat / width;
-            const size_t lane = flat % width;
-            const size_t j = butterfly % quarter;
-            const size_t start = (butterfly / quarter) * span + j;
-            const size_t exponent = j * (fft_length / span);
+    using Index = typename V::Index;
+    const Index width = static_cast<Index>(lanes);
+    const Index fft_length = static_cast<Index>(length);
+    int log_span = 2;
+    for (Index span = 4; span <= fft_length; span *= 4, log_span += 2) {
+        const Index quarter = span / 4;
+        const Index count = (fft_length / 4) * width;
+        for (Index flat = threadIdx.x; flat < count; flat += blockDim.x) {
+            const Index butterfly = V::lane_quotient(flat, width, log_lanes);
+            const Index lane = V::lane_remainder(flat, width);
+            const Index j = V::remainder(butterfly, quarter);
+            const Index start = V::quotient(butterfly, quarter, log_span - 2) * span + j;
+            const Index exponent = j * V::quotient(fft_length, span, log_span);
             const cuDoubleComplex w1 = read_twiddle(roots, exponent);
             const cuDoubleComplex w2 = read_twiddle(roots, 2 * exponent);
-            const cuDoubleComplex a0 = shared[shared_index(start, lane, lanes)];
-            const cuDoubleComplex a1 = mul(shared[shared_index(start + quarter, lane, lanes)], w2);
-            const cuDoubleComplex a2 = shared[shared_index(start + 2 * quarter, lane, lanes)];
-            const cuDoubleComplex a3 = mul(shared[shared_index(start + 3 * quarter, lane, lanes)], w2);
+            const cuDoubleComplex a0 = shared[V::shared_index(start, lane, lanes)];
+            const cuDoubleComplex a1 = mul(shared[V::shared_index(start + quarter, lane, lanes)], w2);
+            const cuDoubleComplex a2 = shared[V::shared_index(start + 2 * quarter, lane, lanes)];
+            const cuDoubleComplex a3 = mul(shared[V::shared_index(start + 3 * quarter, lane, lanes)], w2);
             const cuDoubleComplex u0 = add(a0, a1);
             const cuDoubleComplex u1 = sub(a0, a1);
             const cuDoubleComplex u2 = mul(add(a2, a3), w1);
             const cuDoubleComplex rotated = mul(sub(a2, a3), w1);
             const cuDoubleComplex u3 = make_cuDoubleComplex(rotated.y, -rotated.x);  // -i * rotated
-            shared[shared_index(start, lane, lanes)] = add(u0, u2);
-            shared[shared_index(start + quarter, lane, lanes)] = add(u1, u3);
-            shared[shared_index(start + 2 * quarter, lane, lanes)] = sub(u0, u2);
-            shared[shared_index(start + 3 * quarter, lane, lanes)] = sub(u1, u3);
+            shared[V::shared_index(start, lane, lanes)] = add(u0, u2);
+            shared[V::shared_index(start + quarter, lane, lanes)] = add(u1, u3);
+            shared[V::shared_index(start + 2 * quarter, lane, lanes)] = sub(u0, u2);
+            shared[V::shared_index(start + 3 * quarter, lane, lanes)] = sub(u1, u3);
         }
         __syncthreads();
     }
     if ((log_length & 1) != 0) {
-        const size_t half = fft_length / 2;
-        for (size_t flat = threadIdx.x; flat < half * width; flat += blockDim.x) {
-            const size_t j = flat / width;
-            const size_t lane = flat % width;
-            const cuDoubleComplex a = shared[shared_index(j, lane, lanes)];
-            const cuDoubleComplex b = mul(shared[shared_index(j + half, lane, lanes)],
+        const Index half = fft_length / 2;
+        for (Index flat = threadIdx.x; flat < half * width; flat += blockDim.x) {
+            const Index j = V::lane_quotient(flat, width, log_lanes);
+            const Index lane = V::lane_remainder(flat, width);
+            const cuDoubleComplex a = shared[V::shared_index(j, lane, lanes)];
+            const cuDoubleComplex b = mul(shared[V::shared_index(j + half, lane, lanes)],
                                           read_twiddle(roots, j));
-            shared[shared_index(j, lane, lanes)] = add(a, b);
-            shared[shared_index(j + half, lane, lanes)] = sub(a, b);
+            shared[V::shared_index(j, lane, lanes)] = add(a, b);
+            shared[V::shared_index(j + half, lane, lanes)] = sub(a, b);
         }
         __syncthreads();
     }
 }
 
+template <typename V>
 __global__ void pass1_columns(const cuDoubleComplex* __restrict__ input,
                                cuDoubleComplex* __restrict__ workspace, size_t n, int batch,
-                               int n1, int n2, int cols, int log_n1, size_t cross_base,
+                               int n1, int n2, int cols, int log_n1, int log_cols,
+                               size_t cross_base, int log_cross_base,
                                const cuDoubleComplex* __restrict__ roots,
                                const cuDoubleComplex* __restrict__ cross_low,
                                const cuDoubleComplex* __restrict__ cross_high) {
@@ -201,69 +264,73 @@ __global__ void pass1_columns(const cuDoubleComplex* __restrict__ input,
         return;  // Uniform for the whole block, before any barrier.
     }
     extern __shared__ cuDoubleComplex shared[];
+    using Index = typename V::Index;
     const size_t base = batch_index * n;
-    const size_t first_col = static_cast<size_t>(blockIdx.x) * static_cast<size_t>(cols);
-    const size_t width = static_cast<size_t>(cols);
-    const size_t count = static_cast<size_t>(n1) * width;
+    const Index first_col = static_cast<Index>(blockIdx.x) * static_cast<Index>(cols);
+    const Index width = static_cast<Index>(cols);
+    const Index count = static_cast<Index>(n1) * width;
     // Reference pass 1: flat = n1_index * C + lane.
-    for (size_t flat = threadIdx.x; flat < count; flat += blockDim.x) {
-        const size_t element = flat / width;
-        const size_t lane = flat % width;
-        const size_t column = first_col + lane;
-        const cuDoubleComplex value = column < static_cast<size_t>(n2)
-            ? input[base + element * static_cast<size_t>(n2) + column]
+    for (Index flat = threadIdx.x; flat < count; flat += blockDim.x) {
+        const Index element = V::lane_quotient(flat, width, log_cols);
+        const Index lane = V::lane_remainder(flat, width);
+        const Index column = first_col + lane;
+        const cuDoubleComplex value = column < static_cast<Index>(n2)
+            ? input[base + element * static_cast<Index>(n2) + column]
             : make_cuDoubleComplex(0.0, 0.0);
-        shared[shared_index(reverse_index(element, log_n1), lane, cols)] = value;
+        shared[V::shared_index(reverse_index(element, log_n1), lane, cols)] = value;
     }
     __syncthreads();
-    block_fft(shared, n1, cols, log_n1, roots);
-    for (size_t flat = threadIdx.x; flat < count; flat += blockDim.x) {
-        const size_t k1 = flat / width;
-        const size_t lane = flat % width;
-        const size_t column = first_col + lane;
-        if (column < static_cast<size_t>(n2)) {
-            const uint64_t exponent = (static_cast<uint64_t>(column) * static_cast<uint64_t>(k1))
-                                      % static_cast<uint64_t>(n);
-            const cuDoubleComplex cross = mul(read_twiddle(cross_high, exponent / cross_base),
-                                              read_twiddle(cross_low, exponent % cross_base));
-            workspace[base + k1 * static_cast<size_t>(n2) + column] =
-                mul(shared[shared_index(k1, lane, cols)], cross);
+    block_fft<V>(shared, n1, cols, log_n1, log_cols, roots);
+    for (Index flat = threadIdx.x; flat < count; flat += blockDim.x) {
+        const Index k1 = V::lane_quotient(flat, width, log_cols);
+        const Index lane = V::lane_remainder(flat, width);
+        const Index column = first_col + lane;
+        if (column < static_cast<Index>(n2)) {
+            // column < N2 and k1 < N1 imply column*k1 < N <= 2^24.
+            const Index exponent = V::remainder(column * k1, static_cast<Index>(n));
+            const cuDoubleComplex cross = mul(
+                read_twiddle(cross_high, V::quotient(exponent, static_cast<Index>(cross_base), log_cross_base)),
+                read_twiddle(cross_low, V::remainder(exponent, static_cast<Index>(cross_base))));
+            workspace[base + k1 * static_cast<Index>(n2) + column] =
+                mul(shared[V::shared_index(k1, lane, cols)], cross);
         }
     }
 }
 
+template <typename V>
 __global__ void pass2_rows(const cuDoubleComplex* __restrict__ workspace,
                            cuDoubleComplex* __restrict__ output, size_t n, int batch,
-                           int n1, int n2, int rows, int log_n2,
+                           int n1, int n2, int rows, int log_n2, int log_rows,
                            const cuDoubleComplex* __restrict__ roots) {
     const size_t batch_index = static_cast<size_t>(blockIdx.y) + static_cast<size_t>(gridDim.y) * blockIdx.z;
     if (batch_index >= static_cast<size_t>(batch)) {
         return;
     }
     extern __shared__ cuDoubleComplex shared[];
+    using Index = typename V::Index;
     const size_t base = batch_index * n;
-    const size_t first_row = static_cast<size_t>(blockIdx.x) * static_cast<size_t>(rows);
-    const size_t width = static_cast<size_t>(rows);
-    const size_t count = static_cast<size_t>(n2) * width;
+    const Index first_row = static_cast<Index>(blockIdx.x) * static_cast<Index>(rows);
+    const Index width = static_cast<Index>(rows);
+    const Index count = static_cast<Index>(n2) * width;
     // Reference pass 2 LOAD: flat = lane * N2 + n2_index (contiguous rows).
-    for (size_t flat = threadIdx.x; flat < count; flat += blockDim.x) {
-        const size_t lane = flat / static_cast<size_t>(n2);
-        const size_t element = flat % static_cast<size_t>(n2);
-        const size_t row = first_row + lane;
-        const cuDoubleComplex value = row < static_cast<size_t>(n1)
-            ? workspace[base + row * static_cast<size_t>(n2) + element]
+    for (Index flat = threadIdx.x; flat < count; flat += blockDim.x) {
+        const Index lane = V::quotient(flat, static_cast<Index>(n2), log_n2);
+        const Index element = V::remainder(flat, static_cast<Index>(n2));
+        const Index row = first_row + lane;
+        const cuDoubleComplex value = row < static_cast<Index>(n1)
+            ? workspace[base + row * static_cast<Index>(n2) + element]
             : make_cuDoubleComplex(0.0, 0.0);
-        shared[shared_index(reverse_index(element, log_n2), lane, rows)] = value;
+        shared[V::shared_index(reverse_index(element, log_n2), lane, rows)] = value;
     }
     __syncthreads();
-    block_fft(shared, n2, rows, log_n2, roots);
+    block_fft<V>(shared, n2, rows, log_n2, log_rows, roots);
     // Reference pass 2 STORE: flat = k2 * R + lane (adjacent output k1's).
-    for (size_t flat = threadIdx.x; flat < count; flat += blockDim.x) {
-        const size_t k2 = flat / width;
-        const size_t lane = flat % width;
-        const size_t row = first_row + lane;
-        if (row < static_cast<size_t>(n1)) {
-            output[base + row + static_cast<size_t>(n1) * k2] = shared[shared_index(k2, lane, rows)];
+    for (Index flat = threadIdx.x; flat < count; flat += blockDim.x) {
+        const Index k2 = V::lane_quotient(flat, width, log_rows);
+        const Index lane = V::lane_remainder(flat, width);
+        const Index row = first_row + lane;
+        if (row < static_cast<Index>(n1)) {
+            output[base + row + static_cast<Index>(n1) * k2] = shared[V::shared_index(k2, lane, rows)];
         }
     }
 }
@@ -279,6 +346,11 @@ struct Plan::Impl {
     int log_n2;
     int cols;
     int rows;
+    int log_cols;
+    int log_rows;
+    int log_cross_base;
+    int index_mode;
+    int smem_padding;
     int device = -1;
     size_t bytes;
     size_t shared1;
@@ -299,6 +371,14 @@ struct Plan::Impl {
         if (batch < 1) {
             throw std::runtime_error("fft2: batch must be >= 1");
         }
+        if (opts.index_mode < 0 || opts.index_mode > 1) {
+            throw std::runtime_error("fft2: index_mode must be 0 or 1");
+        }
+        if (opts.smem_padding < 0 || opts.smem_padding > 2) {
+            throw std::runtime_error("fft2: smem_padding must be 0, 1 or 2");
+        }
+        index_mode = opts.index_mode;
+        smem_padding = opts.smem_padding;
         if (n > std::numeric_limits<size_t>::max() / static_cast<size_t>(batch)
             || n * static_cast<size_t>(batch) > std::numeric_limits<size_t>::max() / sizeof(cuDoubleComplex)) {
             throw std::runtime_error("fft2: N * batch byte count overflows size_t");
@@ -315,7 +395,8 @@ struct Plan::Impl {
         }
         log_n1 = integer_log2(static_cast<size_t>(n1));
         log_n2 = integer_log2(static_cast<size_t>(n2));
-        cross_base = size_t{1} << ((log_n + 1) / 2);
+        log_cross_base = (log_n + 1) / 2;
+        cross_base = size_t{1} << log_cross_base;
         bytes = n * static_cast<size_t>(batch) * sizeof(cuDoubleComplex);
 
         check_cuda(cudaGetDevice(&device), "get plan device");
@@ -326,10 +407,12 @@ struct Plan::Impl {
             throw std::runtime_error("fft2: device reports no opt-in shared memory");
         }
         const size_t limit = static_cast<size_t>(optin_limit);
-        cols = choose_tile(n1, n2, opts.tile_cols, limit, "tile_cols");
-        rows = choose_tile(n2, n1, opts.tile_rows, limit, "tile_rows");
-        shared1 = shared_bytes(n1, cols);
-        shared2 = shared_bytes(n2, rows);
+        cols = choose_tile(n1, n2, opts.tile_cols, smem_padding, limit, "tile_cols");
+        rows = choose_tile(n2, n1, opts.tile_rows, smem_padding, limit, "tile_rows");
+        log_cols = integer_log2(static_cast<size_t>(cols));
+        log_rows = integer_log2(static_cast<size_t>(rows));
+        shared1 = shared_bytes(n1, cols, smem_padding);
+        shared2 = shared_bytes(n2, rows, smem_padding);
 
         int max_x = 0;
         int max_y = 0;
@@ -353,10 +436,16 @@ struct Plan::Impl {
         if (limit > kDefaultSharedLimit) {
             // Set the full device limit, never a smaller plan's requirement:
             // constructing another plan must not invalidate an existing plan.
-            check_cuda(cudaFuncSetAttribute(pass1_columns, cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
-                       "opt in pass 1 dynamic shared memory");
-            check_cuda(cudaFuncSetAttribute(pass2_rows, cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
-                       "opt in pass 2 dynamic shared memory");
+            dispatch_variant(index_mode, smem_padding, cols, [&](auto variant) {
+                check_cuda(cudaFuncSetAttribute(pass1_columns<decltype(variant)>,
+                                               cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
+                           "opt in pass 1 dynamic shared memory");
+            });
+            dispatch_variant(index_mode, smem_padding, rows, [&](auto variant) {
+                check_cuda(cudaFuncSetAttribute(pass2_rows<decltype(variant)>,
+                                               cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
+                           "opt in pass 2 dynamic shared memory");
+            });
         }
         workspace.allocate(bytes);
         roots1.upload(make_table(static_cast<size_t>(n1), static_cast<size_t>(n1), 1));
@@ -382,13 +471,17 @@ void Plan::execute(const cuDoubleComplex* in, cuDoubleComplex* out, cudaStream_t
     if (device != p.device) {
         throw std::runtime_error("fft2: execute must use the plan's creation device");
     }
-    pass1_columns<<<p.grid1, kThreads, p.shared1, stream>>>(
-        in, p.workspace.data, p.n, p.batch, p.n1, p.n2, p.cols, p.log_n1, p.cross_base,
-        p.roots1.data, p.cross_low.data, p.cross_high.data);
-    check_cuda(cudaGetLastError(), "launch pass 1 (columns)");
-    pass2_rows<<<p.grid2, kThreads, p.shared2, stream>>>(
-        p.workspace.data, out, p.n, p.batch, p.n1, p.n2, p.rows, p.log_n2, p.roots2.data);
-    check_cuda(cudaGetLastError(), "launch pass 2 (rows)");
+    dispatch_variant(p.index_mode, p.smem_padding, p.cols, [&](auto variant) {
+        pass1_columns<decltype(variant)><<<p.grid1, kThreads, p.shared1, stream>>>(
+            in, p.workspace.data, p.n, p.batch, p.n1, p.n2, p.cols, p.log_n1, p.log_cols,
+            p.cross_base, p.log_cross_base, p.roots1.data, p.cross_low.data, p.cross_high.data);
+        check_cuda(cudaGetLastError(), "launch pass 1 (columns)");
+    });
+    dispatch_variant(p.index_mode, p.smem_padding, p.rows, [&](auto variant) {
+        pass2_rows<decltype(variant)><<<p.grid2, kThreads, p.shared2, stream>>>(
+            p.workspace.data, out, p.n, p.batch, p.n1, p.n2, p.rows, p.log_n2, p.log_rows, p.roots2.data);
+        check_cuda(cudaGetLastError(), "launch pass 2 (rows)");
+    });
 }
 
 size_t Plan::n() const { return impl_->n; }
@@ -401,6 +494,7 @@ std::string Plan::describe() const {
     const Impl& p = *impl_;
     std::ostringstream output;
     output << "fft2 N=" << p.n << " batch=" << p.batch << " N1=" << p.n1 << " N2=" << p.n2
+           << " index_mode=" << p.index_mode << " smem_padding=" << p.smem_padding
            << " C=" << p.cols << " R=" << p.rows << " workspace_bytes=" << p.bytes
            << " pass1{grid=(" << p.grid1.x << ',' << p.grid1.y << ',' << p.grid1.z
            << "),block=(" << kThreads << ",1,1),smem_bytes=" << p.shared1 << "}"

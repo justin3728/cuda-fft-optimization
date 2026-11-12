@@ -13,7 +13,10 @@ struct PlanOptions {
     int n1 = 0;
     int tile_cols = 0;
     int tile_rows = 0;
-};  // 0 selects the automatic split/tile policy.
+    // The first three fields use 0 for the automatic split/tile policy.
+    int index_mode = 0;    // 0 = v1 size_t division, 1 = u32 shift/mask.
+    int smem_padding = 0;  // 0, 1 or 2 unused complex elements per shared row.
+};
 
 class Plan {
 public:

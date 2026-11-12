@@ -1,2 +1,5 @@
+# Normalize text files to LF in the repo (Windows checkouts produced CRLF noise).
+* text=auto
 # Shell entry points must run after a Windows checkout too.
-/scripts/*.sh text eol=lf
+*.sh text eol=lf
+*.csv text eol=lf

@@ -1,0 +1,12 @@
+{
+  "hbm_read_GBs": 1455.888929043768,
+  "hbm_copy_GBs": 1363.1701509935949,
+  "hbm_write_GBs": 1501.5233258880739,
+  "cudaMemcpy_D2D_GBs": 1381.4033196799319,
+  "l2_read_GBs_plateau": 2740.7434171979639,
+  "l2_copy_GBs_plateau": 2851.6762950288789,
+  "l2_plateau_range_MiB": [4,20],
+  "l2_size_bytes": 41943040,
+  "l2_plateau_rule": "median of sampled points with 4 MiB <= total distinct working set <= reported L2 / 2",
+  "theoretical_dram_GBs_reference_only": 1555.2
+}

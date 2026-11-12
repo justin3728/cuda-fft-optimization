@@ -1,0 +1,204 @@
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi12ELi3ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 168 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi12ELi3ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi11ELi3ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 202 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi11ELi3ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 112 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi11ELi3ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi3ELi8EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 218 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi3ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 128 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi3ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 60 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi3ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi3ELi8EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 98 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi3ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi3ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 54 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi3ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi3ELi8EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi3ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi3ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 54 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi3ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 392 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi12ELi4ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 170 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi12ELi4ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi11ELi4ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 168 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi11ELi4ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi11ELi4ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi4ELi8EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 202 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi4ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 106 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi4ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi10ELi4ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi4ELi8EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 120 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi4ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 96 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi4ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi9ELi4ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi4ELi8EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 48 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi4ELi4EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 48 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi4ELi2EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 48 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff10pass2_rowsINS0_8TilePassILi8ELi4ELi1EEEEEvPK7double2PS4_miiS6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 392 bytes cmem[0], 48 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi12ELi3ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 190 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi12ELi3ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 100 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi11ELi3ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 235 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi11ELi3ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 102 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi11ELi3ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi3ELi8EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 228 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi3ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 130 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi3ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 66 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi3ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi3ELi8EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 130 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi3ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 58 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi3ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 58 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi3ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 52 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi3ELi8EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 60 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi3ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi3ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi3ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 54 registers, used 1 barriers, 416 bytes cmem[0], 24 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi12ELi4ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 164 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi12ELi4ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi11ELi4ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 240 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi11ELi4ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 102 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi11ELi4ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 86 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi4ELi8EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 244 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi4ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 106 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi4ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 96 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi10ELi4ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 86 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi4ELi8EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 128 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi4ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 96 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi4ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 96 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi9ELi4ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 86 registers, used 1 barriers, 416 bytes cmem[0], 56 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi4ELi8EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 96 registers, used 1 barriers, 416 bytes cmem[0], 48 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi4ELi4EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 96 registers, used 1 barriers, 416 bytes cmem[0], 48 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi4ELi2EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 96 registers, used 1 barriers, 416 bytes cmem[0], 48 bytes cmem[2]
+ptxas info    : Compiling entry function '_ZN4fft239_GLOBAL__N__b7d3923d_7_fft2_cu_f68ce8ff13pass1_columnsINS0_8TilePassILi8ELi4ELi1EEEEEvPK7double2PS4_miimS6_S6_S6_' for 'sm_80'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 1 barriers, 416 bytes cmem[0], 48 bytes cmem[2]

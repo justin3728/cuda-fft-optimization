@@ -1,0 +1,26 @@
+{
+  "original_total_bytes": 123895685,
+  "spill_locations": {
+    "results/final_a100_20261113/ncu/bwcopy_WS16_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/bwcopy_WS16_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/bwcopy_WS16_cache_none.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/bwcopy_WS16_cache_none.ncu-rep",
+    "results/final_a100_20261113/ncu/bwcopy_WS4096_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/bwcopy_WS4096_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/cufft_N1048576_b32_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/cufft_N1048576_b32_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/cufft_N16777216_b2_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/cufft_N16777216_b2_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/cufft_N4194304_b1_b1_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/cufft_N4194304_b1_b1_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/cufft_N4194304_b8_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/cufft_N4194304_b8_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/cufft_N65536_b1_b1_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/cufft_N65536_b1_b1_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/cufft_N65536_b512_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/cufft_N65536_b512_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/fft2_N1048576_b32_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/fft2_N1048576_b32_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/fft2_N16777216_b2_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/fft2_N16777216_b2_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/fft2_N4194304_b1_b1_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/fft2_N4194304_b1_b1_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/fft2_N4194304_b8_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/fft2_N4194304_b8_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/fft2_N65536_b1_b1_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/fft2_N65536_b1_b1_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/fft2_N65536_b512_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/fft2_N65536_b512_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/vkfft_N1048576_b32_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/vkfft_N1048576_b32_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/vkfft_N16777216_b2_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/vkfft_N16777216_b2_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/vkfft_N4194304_b1_b1_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/vkfft_N4194304_b1_b1_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/vkfft_N4194304_b8_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/vkfft_N4194304_b8_t25_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/vkfft_N65536_b1_b1_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/vkfft_N65536_b1_b1_cache_all.ncu-rep",
+    "results/final_a100_20261113/ncu/vkfft_N65536_b512_t25_cache_all.ncu-rep": "/tmp/t1-ncu-final_a100_20261113-050eelh0/vkfft_N65536_b512_t25_cache_all.ncu-rep"
+  }
+}

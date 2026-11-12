@@ -124,6 +124,64 @@ def test_padding_can_make_even_one_lane_infeasible(limit, padding):
             choose_tile(4096, 4096, limit, requested, padding)
 
 
+@pytest.mark.parametrize("limit", [99 * 1024, 163 * 1024])
+@pytest.mark.parametrize("length,expected", [
+    (256, (8, 4, 4)), (512, (4, 2, 2)), (1024, (2, 2, 2)),
+    (2048, (2, 2, 2)), (4096, (2, None, None)),
+])
+def test_tile_policy_one_table(length, expected, limit):
+    for padding, lanes in enumerate(expected):
+        try:
+            legacy = choose_tile(length, 256, limit, padding=padding)
+        except ValueError:
+            with pytest.raises(ValueError, match="shared-memory"):
+                choose_tile(length, 256, limit, padding=padding, tile_policy=1)
+        else:
+            if shared_bytes(length, 2, padding) > limit:
+                lanes = legacy
+            assert choose_tile(length, 256, limit, padding=padding, tile_policy=1) == lanes
+
+
+@pytest.mark.parametrize("policy", [0, 1])
+def test_explicit_tiles_override_policy(policy):
+    assert choose_tile(512, 256, 163 * 1024, 3, 1, policy) == 3
+    assert choose_tile(4096, 256, 99 * 1024, 1, 0, policy) == 1
+    with pytest.raises(ValueError, match="shared-memory"):
+        choose_tile(4096, 256, 163 * 1024, 3, 0, policy)
+
+
+def test_tile_policy_one_dimension_and_minimum():
+    assert choose_tile(256, 2, 163 * 1024, tile_policy=1) == 2
+    assert choose_tile(64, 256, 163 * 1024, tile_policy=1) == 32
+    assert choose_tile(1024, 256, 32 * 1024 - 1, tile_policy=1) == 1
+
+
+@pytest.mark.parametrize("length,padding,limit", [
+    (4096, 1, 163 * 1024), (2048, 2, 99 * 1024),
+])
+def test_tile_policy_one_falls_back_to_legacy(length, padding, limit):
+    assert choose_tile(length, 256, limit, padding=padding, tile_policy=1) == \
+        choose_tile(length, 256, limit, padding=padding) == 1
+
+
+@pytest.mark.parametrize("n1,n2,batch", [(512, 256, 1), (256, 1024, 3), (2048, 256, 1)])
+@pytest.mark.parametrize("padding", [0, 1, 2])
+@pytest.mark.parametrize("mode", [0, 1])
+def test_tile_policy_preserves_output_bytes(n1, n2, batch, padding, mode):
+    rng = np.random.default_rng(n1 + n2)
+    values = rng.standard_normal((batch, n1 * n2)) + 1j * rng.standard_normal((batch, n1 * n2))
+    options = dict(n1=n1, shared_limit=163 * 1024, index_mode=mode, smem_padding=padding)
+    baseline = two_pass_fft(values, **options)
+    candidate = two_pass_fft(values, tile_policy=1, **options)
+    assert candidate.tobytes() == baseline.tobytes()
+
+
+@pytest.mark.parametrize("policy", [-1, 2])
+def test_invalid_tile_policy(policy):
+    with pytest.raises(ValueError, match="tile_policy"):
+        two_pass_fft(np.zeros(64), tile_policy=policy)
+
+
 @pytest.mark.parametrize("length", [2, 256, 4096])
 @pytest.mark.parametrize("lanes", [1, 3, 8])
 @pytest.mark.parametrize("padding", [0, 1, 2])

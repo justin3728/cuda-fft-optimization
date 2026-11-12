@@ -16,6 +16,8 @@ struct PlanOptions {
     // The first three fields use 0 for the automatic split/tile policy.
     int index_mode = 0;    // 0 = v1 size_t division, 1 = u32 shift/mask.
     int smem_padding = 0;  // 0, 1 or 2 unused complex elements per shared row.
+    // 0 = v1 fit; 1 = 32 KiB target, at least 2 lanes; uses 0 if 2 cannot fit.
+    int tile_policy = 0;
 };
 
 class Plan {

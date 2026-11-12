@@ -10,13 +10,15 @@ and supports `N = 2^16 .. 2^24` and `batch >= 1`.
 and physical memory traffic remain unverified locally. No performance result
 is claimed.** The variant GPU gate below must be run by Claude, on L4 first;
 H9/H10 need a separate A100 measurement before any default changes.
+The T4t tile-policy change has CPU-model validation only; its CUDA builds
+and GPU correctness gate remain pending.
 
 ## Build and gates
 
 ```bash
 python3 -m pip install numpy pytest
 make -C fft2 test-cpu
-# Equivalent, from the repository root:
+# Python reference tests only, from the repository root:
 python3 -m pytest fft2/reference -q
 
 make -C fft2 CUDA_ARCH=sm_89 && fft2/fft2_test
@@ -27,7 +29,9 @@ fft2/fft2_test --describe
 fft2/fft2_test --variants --describe
 ```
 
-The Makefile uses `-std=c++17`, `-Xcompiler=-Wall,-Wextra,-Werror`, and
+`test-cpu` also builds and runs the host planner test with `CXX` (default
+`g++`), C++17 and `-Wall -Wextra -Werror`; no CUDA headers or GPU are needed.
+The CUDA build uses `-std=c++17`, `-Xcompiler=-Wall,-Wextra,-Werror`, and
 `-Werror=all-warnings` (CUDA 13). An older nvcc that rejects the latter can use
 `NVCC_WARNING_FLAGS=`; host warnings still fail the build. Objects live under
 `build/<arch>/`; the executable is relinked on each build so switching back to
@@ -45,14 +49,15 @@ configurations causes a nonzero exit status. `--describe` only prints the nine
 default batch-1 plan descriptions and a summary; it does not execute FFTs.
 
 `--variants` runs that same full list of 29 configurations for every
-`index_mode` in `{0,1}` and `smem_padding` in `{0,1,2}`: 174 configuration
-outcomes, including explicit skips. Each line identifies both axes, the
-requested split/tiles, and either the actual plan/errors or the skip/failure
-reason. Per-axis summaries and a final total follow. Any failure, API failure,
+`index_mode` in `{0,1}`, `smem_padding` in `{0,1,2}` and `tile_policy` in
+`{0,1}`: 348 configuration outcomes, including explicit skips. Each line
+identifies all axes, the requested split/tiles, and either the actual plan/errors
+or the skip/failure reason. Per-axis summaries and a final total follow. Any failure, API failure,
 or axis with no passing configurations makes the exit status nonzero. Shared
-memory is checked before allocation; only combinations that cannot fit even
-one automatic lane (or the explicitly requested widths) are skipped for that
-reason. Unexpected plan/CUDA errors fail the gate.
+memory is checked before allocation; only combinations that cannot fit the
+minimum one lane (both policies), or the explicitly
+requested widths, are skipped for that reason. Unexpected plan/CUDA errors
+fail the gate.
 
 To keep the L4 gate bounded, variants share one random input and one cuFFT
 reference per configuration, use one fft2 plan at a time, and execute only one
@@ -113,7 +118,8 @@ default split is `N1 = 2^floor(log2(N)/2)`, `N2 = N/N1`. Explicit splits must
 have both factors powers of two in 256..4096. Explicit tile widths can be any
 positive integer up to the corresponding dimension if they fit shared
 memory; nondividing widths use zero-filled inactive lanes and guarded global
-accesses in the last tile. The automatic widths are powers of two up to 8.
+accesses in the last tile. Automatic widths are powers of two; policy 0 caps
+them at 8.
 
 Construction validates sizes, byte-count overflow, grid limits, and shared
 memory; allocates `16*N*batch` workspace bytes; and uploads twiddle tables.
@@ -131,7 +137,7 @@ kernel.
 
 ## Tuning variants
 
-Both axes are opt-in hypotheses. `PlanOptions{}` retains v1's `size_t`
+All axes are opt-in hypotheses. `PlanOptions{}` retains v1's `size_t`
 division/remainder, unpadded layout, automatic tile policy, and floating-point
 operation order. The new fields are appended, so existing three-field
 aggregate initializers retain their meaning.
@@ -140,6 +146,7 @@ aggregate initializers retain their meaning.
 fft2::PlanOptions options;
 options.index_mode = 1;    // H9: u32 shift/mask for power-of-two divisors
 options.smem_padding = 1;  // H10: one unused complex element per element-row
+options.tile_policy = 1;   // H13: 32 KiB target, at least two automatic lanes
 fft2::Plan candidate(size_t{1} << 20, 3, options);
 std::cout << candidate.describe() << '\n';
 candidate.execute(device_input, device_output, stream);
@@ -149,9 +156,11 @@ candidate.execute(device_input, device_output, stream);
 |---|---|---|
 | `index_mode` | `0` (default), `1` | **H9:** replacing runtime 64-bit division/remainder with u32 shift/mask may reduce integer instruction overhead. Mode 1 uses u32 for block-local indices and offsets within one transform, including cross-table indexing; the batch base/global address stays 64-bit. |
 | `smem_padding` | `0` (default), `1`, `2` | **H10:** changing the shared row stride from `lanes` to `lanes+padding` may reduce shared-memory bank conflicts. Each padding unit is one unused FP64 complex element per element-row, so allocation is `length*(lanes+padding)*16` bytes. |
+| `tile_policy` | `0` (default), `1` | **H13:** policy 0 keeps v1's largest fitting power-of-two width up to 8. Policy 1 chooses the largest power-of-two width bounded by the other dimension and 32 KiB (including padding), with at least two lanes; if two lanes exceed the device limit, it uses policy 0's choice. Explicit C/R override either policy independently. |
 
-Each kernel is specialized at compile time for both axes. Dispatch happens
-on the host once per launch; there are no mode/padding branches in hot loops.
+Each kernel is specialized at compile time for index mode and padding.
+Dispatch happens on the host once per launch; there are no mode/padding branches in hot loops.
+Tile policy only controls the host's tile choice and adds no kernel specialization.
 Mode 1 also has a separate specialization for explicit non-power-of-two tile
 widths (such as 3 or 5): lane quotient/remainder use u32 division there, while
 FFT lengths, butterfly spans, and cross-table divisors still use shift/mask.
@@ -160,8 +169,8 @@ Production bounds (`N <= 2^24`, `column < N2`, `k1 < N1`) ensure
 `column*k1 < N` and all within-transform offsets fit u32. Mode 0 retains v1's
 64-bit arithmetic. Unsupported axis values throw before device allocation.
 
-Automatic tile selection accounts for padding and halves lanes until the
-allocation fits the queried opt-in limit. It never reduces explicit widths;
+Policy 0 automatic tile selection accounts for padding and halves lanes until
+the allocation fits the queried opt-in limit. It never reduces explicit widths;
 an infeasible plan throws before workspace allocation. Calculated examples:
 
 - A100's modeled 163 KiB limit, length 4096: padding 0 chooses two lanes
@@ -171,11 +180,20 @@ an infeasible plan throws before workspace allocation. Calculated examples:
   (64 KiB); padding 2 chooses one lane (96 KiB). Length 4096 cannot fit even
   one lane with padding 1 or 2.
 
-Thus L4's `N >= 2^23` automatic splits skip padding 1/2 in the variant gate;
-A100's `N = 2^24` split skips padding 2. These are modeled resource limits,
+For policy 0, L4's `N >= 2^23` automatic splits skip padding 1/2 in the variant
+gate; A100's `N = 2^24` split skips padding 2. These are modeled resource limits,
 not measured performance. The CPU model allocates physical padded storage,
 uses `shared_index()` for accesses, and poisons padding with NaNs to expose
 accidental padding reads.
+
+Policy 1 stops shrinking at two lanes, even when that exceeds the 32 KiB
+target. If two lanes exceed the device opt-in limit, it uses the same resource
+tile choice as policy 0, including its error if one lane cannot fit.
+For padding 0, lengths 256/512/1024/2048/4096 choose 8/4/2/2/2 lanes on
+modeled A100 limits; L4 uses one lane for length 4096.
+The CPU gate exercises the actual host planner without CUDA, plus
+byte-for-byte policy comparisons in the CPU FFT model. GPU correctness and
+A100 batch-1/batched A/B remain required; policy 0 stays the default.
 
 To accept/reject these hypotheses, Claude must measure on **A100-SXM4-40GB**:
 
@@ -211,7 +229,7 @@ To accept/reject these hypotheses, Claude must measure on **A100-SXM4-40GB**:
    (judge large-working-set traffic using measured limits). Record DRAM/L2
    read/write bytes and calibrate DRAM bytes with the same GPU's copy kernel.
    Report unsupported combinations explicitly and preserve raw ncu evidence.
-   Keep both defaults at zero until this evidence supports a separate change.
+   Keep all defaults at zero until this evidence supports a separate change.
 
 ## Exact decomposition and layouts
 
@@ -315,7 +333,7 @@ over the supported range; only the workspace scales with batch.
 
 ## Shared-memory budgets (automatic split and tiles)
 
-These are **calculated allocation sizes**, not measurements. The policy
+These are **calculated allocation sizes**, not measurements. Default policy 0
 chooses the largest power-of-two tile width <= 8 fitting the device's queried
 `cudaDevAttrMaxSharedMemoryPerBlockOptin` limit. Each pass needs exactly
 `length*(lanes+padding)*16` bytes; the table below uses default padding 0.

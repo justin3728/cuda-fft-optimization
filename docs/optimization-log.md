@@ -79,7 +79,7 @@
 
 ---
 
-## L003 — 2026-11-12 — T2 2-pass v1 正確性 gate（**A100-SXM4-40GB**；另有 G4 正確性）（**草稿，待使用者審閱**）
+## L003 — 2026-11-12 — T2 2-pass v1 正確性 gate（**A100-SXM4-40GB**；另有 G4 正確性）
 
 **來源**：PR #2 @ 87597e8，`notebooks/t2_gate.ipynb`（使用者在 Colab UI 執行 Run all，輸出貼回）。結果在 `results/t2_gate_a100_20261112/summary.md` 和 `results/t2_gate_g4_20261112/summary.md`。ncu 設定一律 `--clock-control none`，cache control 用預設值。
 
@@ -130,7 +130,7 @@
 - batched（block 數夠多）時，最佳點在 k=4，不是 k=1。k=1 在 2^16 b512 時比 auto 慢 15%。推論：C 越小，pass1 每次跨行讀取的連續 bytes 越少（C=1 時只有 16 B），sector 利用率下降。**佔用率和合併存取之間有取捨**，所以 `tile_policy` 不能只追佔用率。
 - 因此 A100 tile sweep 必須涵蓋 2^24（DRAM-bound，auto C=2 → 1 block/SM）和 batched 設定，並看 DRAM sector 效率（例如 `dram__bytes_read` 對理想值的比例）。
 
-## L005 — 2026-11-12 — T1 full 基準 + H13 tile sweep（**A100-SXM4-40GB**，正式平台）（**草稿，待使用者審閱**）
+## L005 — 2026-11-12 — T1 full 基準 + H13 tile sweep（**A100-SXM4-40GB**，正式平台）
 
 **來源**：main @ aad3cbe，Claude 經 SSH 在 Colab A100 執行（`CUDA_ARCH=sm_80`，未開 High-RAM，約 33 分鐘、3.02 單位）。結果在 `results/t1_a100_20261112/` 和 `results/h13_a100_20261112/`。ncu 設定為 `--clock-control none`、`--cache-control all`（2^20 b1 另有 `none`）。hot 時間是 15 次 trial 的中位數。
 
@@ -170,7 +170,7 @@
 3. **超越 cuFFT 的空間（推論）**：cuFFT 在 2^23–2^24 用 3 趟。fft2 是 2 趟，若每趟達到 cuFFT 同等的約 88%，2^24 約 920 µs，比 cuFFT 的 1260 µs 快約 1.37 倍。2^22 以下 cuFFT 已經是 2 趟，大 batch 時 2.0–2.5 趟，很難超越。
 4. H9/H10（T4a）尚未 A/B（bench 還不能選，待 T2c）。在佔用率／radix 問題解決前，預期影響較小。
 
-## L006 — 2026-11-12 — A/B：tile_policy（H13/T4t）、register radix（H11/T4b）、index/padding（H9–H10/T2c）（**A100-SXM4-40GB**）（**草稿，待使用者審閱**）
+## L006 — 2026-11-12 — A/B：tile_policy（H13/T4t）、register radix（H11/T4b）、index/padding（H9–H10/T2c）（**A100-SXM4-40GB**）
 
 **來源**：分支 `codex/t2d-variant-axes` @ 43f9552（main 加上 bench 的 tp/rx 軸）。Claude 經 SSH 在 Colab A100 執行，跑了約 28.5 分鐘（另有約 67 分鐘空轉，原因是腳本上傳失敗，已訂規則防止）。結果在 `results/ab_a100_20261112/`。共 8 個變體 × 2^16–2^24，比較 legacy、cuFFT、VkFFT；ncu 設定同 L005。全部列都是 `ok`，rel L2 ≤ 6.1e-16。
 
@@ -208,7 +208,7 @@
   - 推論（**H15，待證**）：每個 SM 在途的記憶體請求太少。以 Little's law 粗估，要讓 HBM 跑滿，每個 SM 約需 8 KB 在途請求，而 256 個 thread 各 1 個 16 B 的 load 只有 4 KB。
   - 方向：在 load 迴圈中讓每個 thread 先發出多個獨立的 load 再寫入 shared（ILP），或在 2^24 讓 lanes=1 加 rx=2 以取得 64 KiB / 25% 佔用率（這組本次沒有量）。
 
-**建議（推論，待使用者決定）**
+**建議（推論；第 1 項的預設值已經使用者核可，2026-11-12，由 T4d 實作）**
 1. **預設值**：
    - tile_policy 改為 1；
    - radix_mode 依工作量自動選擇：L·lanes/radix ≥ 256 個 thread 時用 radix-16，否則用 radix-8；

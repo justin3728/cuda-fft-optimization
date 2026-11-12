@@ -6,7 +6,7 @@ set -uo pipefail
 BRANCH=${1:?usage: gate_fft2.sh BRANCH}
 export PATH=/usr/local/cuda/bin:$PATH
 R=https://github.com/justin3728/cuda-fft-optimization.git
-W=/content/gate; rm -rf "$W"; mkdir -p "$W"; cd "$W"
+W=/content/gate; rm -rf "$W"; mkdir -p "$W"; cd "$W" || exit 1
 nvidia-smi --query-gpu=name --format=csv,noheader
 fail=0
 git clone -q -b "$BRANCH" "$R" src && cd src && git log --oneline -1

@@ -1,5 +1,4 @@
-# Included after every legacy rule, so the original default target and its
-# CUDA_ARCH=sm_61 default remain unchanged. New targets default to sm_80.
+# Measurement targets default to sm_80 unless CUDA_ARCH is set explicitly.
 .PHONY: tools bench
 T1_ARCH = $(if $(filter command line environment,$(origin CUDA_ARCH)),$(CUDA_ARCH),sm_80)
 T1_OUT = results/$(TAG)/build
@@ -18,7 +17,7 @@ T1_DEFS += -DT1_WITH_FFTW
 T1_LIBS += -lfftw3
 endif
 T1_HEADERS = $(wildcard bench/common/*.cuh bench/common/*.hpp bench/backends/*.hpp) fft2/fft2.h
-T1_FFT_SOURCES = bench/fft_bench.cu bench/backends/legacy.cu bench/backends/cufft.cu bench/backends/vkfft.cu bench/backends/fft2.cu fft2/fft2.cu
+T1_FFT_SOURCES = bench/fft_bench.cu bench/backends/cufft.cu bench/backends/vkfft.cu bench/backends/fft2.cu fft2/fft2.cu
 
 tools: $(T1_OUT)/bwtest
 bench: $(T1_OUT)/fft_bench
@@ -28,12 +27,9 @@ $(T1_OUT):
 	@case '$(TAG)' in *[!a-zA-Z0-9_.-]*|.*|-*) echo 'Invalid TAG' >&2; exit 1;; esac
 	mkdir -p $@
 
-$(T1_OUT)/legacy.o: fft_cuda.cu fft_cuda.h | $(T1_OUT)
-	$(T1_NVCC) -O3 -m64 -arch=$(T1_ARCH) -std=c++17 -I. -c $< -o $@
-
 $(T1_OUT)/bwtest: tools/bwtest.cu $(T1_HEADERS) | $(T1_OUT)
 	$(T1_NVCC) $(T1_FLAGS) $< -o $@ -ldl
 
-$(T1_OUT)/fft_bench: $(T1_FFT_SOURCES) $(T1_HEADERS) $(T1_OUT)/legacy.o | $(T1_OUT)
+$(T1_OUT)/fft_bench: $(T1_FFT_SOURCES) $(T1_HEADERS) | $(T1_OUT)
 	@test -f third_party/VkFFT/vkFFT/vkFFT.h || { echo 'Run git submodule update --init third_party/VkFFT' >&2; exit 1; }
-	$(T1_NVCC) $(T1_FLAGS) $(T1_INCLUDES) $(T1_DEFS) $(T1_FFT_SOURCES) $(T1_OUT)/legacy.o -o $@ $(T1_LIBS)
+	$(T1_NVCC) $(T1_FLAGS) $(T1_INCLUDES) $(T1_DEFS) $(T1_FFT_SOURCES) -o $@ $(T1_LIBS)

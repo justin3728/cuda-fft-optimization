@@ -1,8 +1,6 @@
 .DS_Store
 *.o
 *.log
-benchmark
-profile_stages
 
 # New measurement build products and Python caches.
 results/*/build/

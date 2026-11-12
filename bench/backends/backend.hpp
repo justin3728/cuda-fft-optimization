@@ -18,30 +18,15 @@ struct FftBackend {
         throw std::runtime_error("kernel export is only available for VkFFT");
     }
 };
-std::unique_ptr<FftBackend> make_legacy();
 std::unique_ptr<FftBackend> make_cufft();
 std::unique_ptr<FftBackend> make_vkfft(bool keep_code = false);
-std::unique_ptr<FftBackend> make_fft2(fft2::PlanOptions options = {}, bool out_of_place = false);
-inline std::string fft2_name(fft2::PlanOptions options, bool out_of_place = false) {
-    std::string name = "fft2[n1=" + std::to_string(options.n1) + ",c=" + std::to_string(options.tile_cols) +
-                       ",r=" + std::to_string(options.tile_rows);
-    if (options.index_mode != 0) name += ",im=" + std::to_string(options.index_mode);
-    if (options.smem_padding != 0) name += ",pad=" + std::to_string(options.smem_padding);
-    if (options.tile_policy != 0) name += ",tp=" + std::to_string(options.tile_policy);
-    if (options.radix_mode != 0) name += ",rx=" + (options.radix_mode == -1 ? std::string("auto") : std::to_string(options.radix_mode));
-    if (options.twiddle_mode != 0) name += ",tw=" + std::to_string(options.twiddle_mode);
-    if (options.cross_mode != 0) name += ",cx=" + std::to_string(options.cross_mode);
-    if (options.io_mode != 0) name += ",io=" + std::to_string(options.io_mode);
-    if (out_of_place) name += ",oop=1";
-    return name + "]";
-}
-inline std::unique_ptr<FftBackend> backend(const std::string& name, bool keep_code = false,
-                                         fft2::PlanOptions options = {}, bool out_of_place = false) {
+std::unique_ptr<FftBackend> make_fft2(bool out_of_place = false);
+inline std::string fft2_name(bool out_of_place = false) { return out_of_place ? "fft2_oop" : "fft2"; }
+inline std::unique_ptr<FftBackend> backend(const std::string& name, bool keep_code = false, bool out_of_place = false) {
     // Add the next implementation here; the driver does not know backend internals.
-    if (name == "legacy") return make_legacy();
     if (name == "cufft") return make_cufft();
     if (name == "vkfft") return make_vkfft(keep_code);
-    if (name == "fft2") return make_fft2(options, out_of_place);
+    if (name == "fft2") return make_fft2(out_of_place);
     throw std::runtime_error("unknown implementation: " + name);
 }
 inline bool cufft_dimensions(size_t n, int batch, std::string* why) {

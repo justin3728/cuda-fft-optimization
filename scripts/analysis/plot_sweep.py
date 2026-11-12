@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from io_utils import md_table, positive, read_csv
 
 # Okabe-Ito palette. Backend colors are stable across every figure.
-COLORS = {"legacy": "#D55E00", "cufft": "#0072B2", "vkfft": "#009E73", "fft2": "#CC79A7"}
+COLORS = {"cufft": "#0072B2", "vkfft": "#009E73", "fft2": "#CC79A7"}
 EXTRA_COLORS = ["#E69F00", "#56B4E9", "#000000"]
 MARKERS = ["o", "s", "^", "v", "D", "P", "X"]
 LINESTYLES = ["-", "--", "-.", ":"]
@@ -19,13 +19,13 @@ LINESTYLES = ["-", "--", "-.", ":"]
 
 def series_styles(rows: list[dict]) -> dict[str, dict]:
     implementations = sorted({r["impl"] for r in rows})
-    families = sorted({impl.split("[", 1)[0] for impl in implementations})
+    families = sorted({impl.removesuffix("_oop") for impl in implementations})
     colors = dict(COLORS)
     for i, family in enumerate(f for f in families if f not in colors):
         colors[family] = EXTRA_COLORS[i % len(EXTRA_COLORS)]
     styles = {}
     for family in families:
-        for i, impl in enumerate(name for name in implementations if name.split("[", 1)[0] == family):
+        for i, impl in enumerate(name for name in implementations if name.removesuffix("_oop") == family):
             styles[impl] = {"color": colors[family], "marker": MARKERS[i % len(MARKERS)],
                             "linestyle": LINESTYLES[(i // len(MARKERS)) % len(LINESTYLES)]}
     return styles

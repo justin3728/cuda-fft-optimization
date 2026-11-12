@@ -1,0 +1,8 @@
+stage,status,elapsed_seconds
+build,OK,75
+collect_env,OK,1
+bandwidth,OK,16
+sweep,OK,92
+vkfft_export,OK,4
+ncu,OK,305
+analysis,OK,7

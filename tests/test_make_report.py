@@ -12,9 +12,8 @@ from make_report import Missing, Record, Run, gap_values, generate_report, kerne
 
 FIXTURE = Path(__file__).parent / "fixtures/report"
 TAG = "smoke_l4_20261111"
-VARIANT_TAG = "synthetic_fft2_variants"
-AUTO_FFT2 = "fft2[n1=0,c=0,r=0]"
-OOP_FFT2 = "fft2[n1=1024,c=4,r=8,oop=1]"
+AUTO_FFT2 = "fft2"
+OOP_FFT2 = "fft2_oop"
 
 
 def test_missing_metadata_and_non_a100_banner():
@@ -90,11 +89,10 @@ def write_rows(path, rows):
 
 
 def test_sweep_uses_measured_times_and_matching_floors():
-    report = generate_report(FIXTURE, TAG, impls=("legacy", "vkfft"))
-    assert "| 65536 | 1 | b1 | legacy | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
-    assert "| 65536 | 1 | b1 | legacy | cold | 73.728 | 0.736111 | 4 | ok |" in report
-    assert "| 16777216 | 1 | b1 | legacy | hot | n/a" in report
-    assert "unsupported" in report
+    report = generate_report(FIXTURE, TAG, impls=("cufft", "vkfft"))
+    assert "| 65536 | 1 | b1 | cufft | hot | 45.9264 | 1 | 13.3881 | ok |" in report
+    assert "| 65536 | 1 | b1 | cufft | cold | 54.272 | 1 | 2.94444 | ok |" in report
+    assert "| 16777216 | 1 | b1 | cufft | hot | 8901.43 |" in report
     assert "impl_detail" not in report
 
 
@@ -102,7 +100,7 @@ def test_sweep_uses_measured_times_and_matching_floors():
 def test_fft2_optional_impl_detail(tmp_path, with_detail):
     target = copy_run(tmp_path)
     rows = read_rows(target / "sweep/raw.csv")
-    fft2 = [dict(row, impl="fft2") for row in rows if row["impl"] == "legacy" and row["N"] == "65536"]
+    fft2 = [dict(row, impl="fft2") for row in rows if row["impl"] == "cufft" and row["N"] == "65536"]
     if with_detail:
         for row in rows:
             row["impl_detail"] = ""
@@ -112,17 +110,17 @@ def test_fft2_optional_impl_detail(tmp_path, with_detail):
     write_rows(target / "sweep/raw.csv", rows + fft2)
     report = generate_report(tmp_path, "current", impls=("fft2",))
     if with_detail:
-        assert "| fft2 | padding | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
-        assert "| fft2 | radix8 | cold | 73.728 | 0.736111 | 4 | ok |" in report
+        assert "| fft2 | padding | hot | 45.9264 | 1 | 13.3881 | ok |" in report
+        assert "| fft2 | radix8 | cold | 54.272 | 1 | 2.94444 | ok |" in report
     else:
         assert "impl_detail" not in report
-        assert "| fft2 | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
+        assert "| fft2 | hot | 45.9264 | 1 | 13.3881 | ok |" in report
 
 
 def test_family_selection_preserves_full_labels_and_auto_first(tmp_path):
     # Synthetic CPU schema/arithmetic cases, not GPU measurements. The oop label
-    # sorts before the auto label lexically, so this checks the explicit priority.
-    oop = "fft2[n1=0,c=0,r=0,oop=1]"
+    # is listed first in the input, so this checks the explicit priority.
+    oop = OOP_FFT2
     rows = [dict(impl=impl, N=128, batch=1, batch_mode="b1", timing_mode=timing,
                  status="ok", time_ms_median=time)
             for impl, time in ((oop, .004), (AUTO_FFT2, .002), ("cufft", .008))
@@ -137,91 +135,13 @@ def test_family_selection_preserves_full_labels_and_auto_first(tmp_path):
     assert "fft2[" not in generate_report(tmp_path, "variants", impls=("cufft",))
 
 
-def test_labelled_fft2_fixture_keeps_each_series_in_every_section():
-    report = generate_report(FIXTURE, VARIANT_TAG, baseline_tag=VARIANT_TAG, impls=("cufft", "fft2"))
-    sweep, rest = report.split("## FFT sweep")[1].split("## Per-kernel profiles")
-    kernels, comparison = rest.split("## Before / after")
-    for section in (sweep, kernels, comparison):
-        assert section.index(AUTO_FFT2) < section.index(OOP_FFT2)
-        assert section.count(AUTO_FFT2) == 2
-        assert section.count(OOP_FFT2) == 2
-    assert f"| {AUTO_FFT2} | hot | 4 | 2 | 4 | ok | 3 | 1 | 25 |" in sweep
-    assert f"| {AUTO_FFT2} | cold | 8 | 2.5 | 4 | ok | 3 | 2 | 25 |" in sweep
-    assert f"| {OOP_FFT2} | hot | 2 | 4 | 2 | ok | 1 | 1 | 50 |" in sweep
-    assert f"| {OOP_FFT2} | cold | 4 | 5 | 2 | ok | 1 | 2 | 50 |" in sweep
-    for kernel in ("synthetic_auto_pass1", "synthetic_auto_pass2", "synthetic_oop_pass1", "synthetic_oop_pass2"):
-        assert kernels.count(f"| {kernel} |") == 2
-
-
-def test_auto_label_precedes_lexically_earlier_label_in_every_section(tmp_path):
-    target = tmp_path / "current"
-    shutil.copytree(FIXTURE / VARIANT_TAG, target)
-    oop = "fft2[n1=0,c=0,r=0,oop=1]"
-    for path in target.rglob("*.csv"):
-        path.write_text(path.read_text(encoding="utf-8").replace(OOP_FFT2, oop), encoding="utf-8")
-    report = generate_report(tmp_path, "current", baseline_tag="current", impls=("fft2",))
-    sweep, rest = report.split("## FFT sweep")[1].split("## Per-kernel profiles")
-    kernels, comparison = rest.split("## Before / after")
-    for section in (sweep, kernels, comparison):
-        assert section.index(AUTO_FFT2) < section.index(oop)
-
-
-def test_labelled_fft2_cufft_only_cli_excludes_all_variants():
-    script = Path(__file__).resolve().parents[1] / "scripts/analysis/make_report.py"
-    result = subprocess.run(
-        [sys.executable, str(script), "--tag", VARIANT_TAG, "--baseline-tag", VARIANT_TAG,
-         "--impls", "cufft", "--results-root", str(FIXTURE)],
-        capture_output=True, encoding="utf-8", env=dict(os.environ, PYTHONIOENCODING="utf-8"))
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == generate_report(FIXTURE, VARIANT_TAG, baseline_tag=VARIANT_TAG, impls=("cufft",))
-    assert "fft2[" not in result.stdout
-    assert "synthetic_auto_pass" not in result.stdout
-    assert "synthetic_oop_pass" not in result.stdout
-    assert "| cufft | hot | 8 | 1 |" in result.stdout
-
-
-@pytest.mark.parametrize("source", ["index.csv", "config_totals.csv"])
-def test_labelled_profiles_from_index_or_totals_remain_visible(tmp_path, source):
-    target = tmp_path / "current"
-    shutil.copytree(FIXTURE / VARIANT_TAG, target)
-    (target / "ncu/summary/fft2_variants.csv").unlink()
-    other = "index.csv" if source == "config_totals.csv" else "config_totals.csv"
-    (target / "ncu" / other).unlink()
-    report = generate_report(tmp_path, "current", impls=("fft2",))
-    kernels = report.split("## Per-kernel profiles")[1].split("## Missing data")[0]
-    headings = [line for line in kernels.splitlines() if line.startswith("### impl=")]
-    assert len(headings) == 4
-    assert all(AUTO_FFT2 in line for line in headings[:2])
-    assert all(OOP_FFT2 in line for line in headings[2:])
-    assert f"Source: `results/current/ncu/{source} row" in kernels
-    assert "n/a[^missing-" in kernels
-
-
-def test_labelled_fft2_cufft_reference_uses_full_config_and_timing(tmp_path):
-    target = tmp_path / "current"
-    shutil.copytree(FIXTURE / VARIANT_TAG, target)
-    path = target / "sweep/raw.csv"
-    rows = read_rows(path)
-    cufft = next(row for row in rows if row["impl"] == "cufft" and row["timing_mode"] == "hot")
-    rows += [dict(cufft, **changes, time_ms_median="0.1")
-             for changes in (dict(N="256"), dict(batch="8"), dict(batch_mode="other"))]
-    write_rows(path, rows)
-    report = generate_report(tmp_path, "current", impls=("fft2",))
-    assert f"| 128 | 1 | b1 | {OOP_FFT2} | hot | 2 | 4 |" in report
-    assert f"| 128 | 1 | b1 | {OOP_FFT2} | cold | 4 | 5 |" in report
-    write_rows(path, [row for row in rows if row is not cufft])
-    report = generate_report(tmp_path, "current", impls=("fft2",))
-    assert f"| 128 | 1 | b1 | {OOP_FFT2} | hot | 2 | n/a[^missing-" in report
-    assert "unique cufft time_ms_median for ('128', '1', 'b1', 'hot')" in report
-
-
 def test_wrong_results_do_not_get_derived_metrics(tmp_path):
     target = copy_run(tmp_path)
     rows = read_rows(target / "sweep/raw.csv")
     rows[0]["status"] = "wrong"
     write_rows(target / "sweep/raw.csv", rows)
     report = generate_report(tmp_path, "current")
-    assert "| legacy | hot | 63.1296 | n/a" in report
+    assert "| cufft | hot | 45.9264 | n/a" in report
     assert "status=wrong; derived metrics require ok" in report
 
 
@@ -229,7 +149,7 @@ def test_missing_floor_is_not_replaced_by_derived_estimate(tmp_path):
     target = copy_run(tmp_path)
     (target / "bandwidth/pass_floor.csv").unlink()
     report = generate_report(tmp_path, "current")
-    assert "| legacy | hot | 63.1296 | 0.727494 | n/a" in report
+    assert "| cufft | hot | 45.9264 | 1 | n/a" in report
     assert "missing inplace time_ms_median for ('65536', '1', 'b1', 'hot')" in report
 
 
@@ -243,12 +163,11 @@ def test_duplicate_join_keys_are_rejected(tmp_path):
 
 def test_old_markdown_profiles_keep_repeated_kernel_launches():
     report = generate_report(FIXTURE, TAG)
-    assert report.count("| fft_block_1024_specialized |") == 4
     assert report.count("| regular_fft_factor&lt;") == 4
     assert report.count("| VkFFT_main |") == 4
     assert "**L2-resident:** DRAM bytes undercount traffic" in report
-    assert "| 68.928 | 1.92402e+07 | 12544 |" in report
-    assert "| tex_throttle | 59.02 | barrier | 13.46 |" in report
+    assert "| 341.632 | 4.01475e+07 | 2.20314e+06 |" in report
+    assert "| tex_throttle | 45.98 | short_scoreboard | 23.33 |" in report
 
 
 def test_kernel_arithmetic_and_missing_counters(tmp_path):
@@ -297,7 +216,7 @@ def test_missing_calibration_does_not_use_stored_factor(tmp_path):
     (target / "ncu/copy_calibration.csv").unlink()
     report = generate_report(tmp_path, "current")
     assert "missing dram_traffic_factor for working_set_MiB=4096" in report
-    assert "| 68.928 | 1.92402e+07 | 12544 | n/a[^missing-" in report
+    assert "| 341.632 | 4.01475e+07 | 2.20314e+06 | n/a[^missing-" in report
 
 
 def test_gap_units_percentage_policy_and_missing_passes(tmp_path):
@@ -325,7 +244,7 @@ def test_extrapolated_totals_do_not_supply_gap(tmp_path):
     write_rows(target / "ncu/config_totals.csv", rows)
     report = generate_report(tmp_path, "current")
     assert "sampled/extrapolated totals cannot supply a measured gap" in report
-    assert "| 1048576 | 1 | b1 | legacy | hot | 604.365 | 1.16181 | 21.6587 | ok | n/a" in report
+    assert "| 1048576 | 1 | b1 | cufft | hot | 702.157 | 1 | 25.1633 | ok | n/a" in report
 
 
 def test_before_after_partial_overlap(tmp_path):
@@ -334,18 +253,18 @@ def test_before_after_partial_overlap(tmp_path):
     old = [row for row in read_rows(baseline / "sweep/raw.csv") if row["N"] != "16777216"]
     new = [row for row in read_rows(current / "sweep/raw.csv") if row["N"] != "1048576"]
     for row in old:
-        if row["impl"] == "legacy":
+        if row["impl"] == "cufft":
             row["time_ms_median"] = str(float(row["time_ms_median"]) * 2)
     write_rows(baseline / "sweep/raw.csv", old)
     write_rows(current / "sweep/raw.csv", new)
-    report = generate_report(tmp_path, "current", baseline_tag="before", impls=("legacy",))
+    report = generate_report(tmp_path, "current", baseline_tag="before", impls=("cufft",))
     comparison = report.split("## Before / after")[1].split("## Missing data")[0]
     shared, unmatched = comparison.split("### Non-overlapping sweep configurations")
-    assert "| 65536 | 1 | b1 | legacy | hot | 126.259 | 63.1296 | -63.1296 | -50 | ok | ok |" in shared
+    assert "| 65536 | 1 | b1 | cufft | hot | 91.8528 | 45.9264 | -45.9264 | -50 | ok | ok |" in shared
     assert "| 1048576 |" not in shared
     assert "| 16777216 |" not in shared
-    assert "| 1048576 | 1 | b1 | legacy | hot | before only |" in unmatched
-    assert "| 16777216 | 1 | b1 | legacy | hot | after only |" in unmatched
+    assert "| 1048576 | 1 | b1 | cufft | hot | before only |" in unmatched
+    assert "| 16777216 | 1 | b1 | cufft | hot | after only |" in unmatched
     assert "### Baseline environment: before" in comparison
     assert "smoke test, not official numbers" in comparison
 
@@ -355,32 +274,11 @@ def test_before_after_does_not_cross_variant_keys(tmp_path):
     baseline = copy_run(tmp_path, "before")
     for target, variant in ((current, "padding"), (baseline, "radix8")):
         rows = [dict(row, impl="fft2", impl_detail=variant) for row in read_rows(target / "sweep/raw.csv")
-                if row["impl"] == "legacy"]
+                if row["impl"] == "cufft"]
         write_rows(target / "sweep/raw.csv", rows)
     report = generate_report(tmp_path, "current", baseline_tag="before", impls=("fft2",))
     assert "missing shared requested sweep configurations" in report
     assert "| -50 |" not in report
-
-
-def test_before_after_full_labels_and_non_overlapping_variants(tmp_path):
-    current, baseline = tmp_path / "current", tmp_path / "before"
-    for target in (current, baseline):
-        shutil.copytree(FIXTURE / VARIANT_TAG, target)
-    baseline_only = "fft2[n1=512,c=8,r=4]"
-    rows = read_rows(baseline / "sweep/raw.csv")
-    for row in rows:
-        row["time_ms_median"] = str(float(row["time_ms_median"]) * 2)
-        if row["impl"] == OOP_FFT2:
-            row["impl"] = baseline_only
-    write_rows(baseline / "sweep/raw.csv", rows)
-    report = generate_report(tmp_path, "current", baseline_tag="before", impls=("fft2",))
-    shared, unmatched = report.split("## Before / after")[1].split("### Non-overlapping sweep configurations")
-    assert f"| {AUTO_FFT2} | hot | 8 | 4 | -4 | -50 | ok | ok |" in shared
-    assert OOP_FFT2 not in shared
-    assert baseline_only not in shared
-    assert f"| {OOP_FFT2} | hot | after only |" in unmatched
-    assert f"| {baseline_only} | hot | before only |" in unmatched
-    assert "| cufft |" not in shared + unmatched
 
 
 def test_missing_baseline_is_reported(tmp_path):
@@ -439,21 +337,16 @@ def test_golden_report():
     assert generate_report(FIXTURE, TAG) == (FIXTURE / "golden.md").read_text(encoding="utf-8")
 
 
-def test_labelled_fft2_golden_report():
-    assert generate_report(FIXTURE, VARIANT_TAG, baseline_tag=VARIANT_TAG, impls=("cufft", "fft2")) == (
-        FIXTURE / "synthetic_fft2_variants.md").read_text(encoding="utf-8")
-
-
 def test_missing_sweep_column_remains_visible(tmp_path):
     target = copy_run(tmp_path)
     rows = read_rows(target / "sweep/raw.csv")
     for row in rows:
         row.pop("timing_mode")
     write_rows(target / "sweep/raw.csv", rows)
-    report = generate_report(tmp_path, "current", impls=("legacy",))
+    report = generate_report(tmp_path, "current", impls=("cufft",))
     assert "missing timing_mode" in report
-    assert "| legacy | n/a[^missing-" in report
-    assert "63.1296" in report
+    assert "| cufft | n/a[^missing-" in report
+    assert "45.9264" in report
 
 
 def test_sampling_is_shown_without_scaling_kernels(tmp_path):

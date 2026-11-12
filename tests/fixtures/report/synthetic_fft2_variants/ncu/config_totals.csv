@@ -1,5 +1,0 @@
-impl,N,batch,batch_mode,cache_control,calibrated_memory_passes,fixture_note
-"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,none,1,synthetic CPU arithmetic constant; not a GPU measurement
-"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,all,1,synthetic CPU arithmetic constant; not a GPU measurement
-"fft2[n1=0,c=0,r=0]",128,1,b1,none,3,synthetic CPU arithmetic constant; not a GPU measurement
-"fft2[n1=0,c=0,r=0]",128,1,b1,all,3,synthetic CPU arithmetic constant; not a GPU measurement

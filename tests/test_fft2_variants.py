@@ -112,10 +112,11 @@ def test_default_candidates_fit_documented_a100_budgets_and_cover_every_size(bas
 
 
 @pytest.mark.parametrize("failing_worker", ["", ".v002"])
-def test_variants_reuse_build_and_continue_after_a_worker_failure(bash, tmp_path, failing_worker):
+@pytest.mark.parametrize("io", [0, 2])
+def test_variants_reuse_build_and_continue_after_a_worker_failure(bash, tmp_path, failing_worker, io):
     shutil.copytree(ROOT / "scripts", tmp_path / "scripts")
     variants = tmp_path / "variants.txt"
-    variants.write_text("n1=0 c=0 r=0\nn1=0 c=0 r=0 tp=01 rx=01\nn1=0 c=0 r=0 rx=02\n", encoding="utf-8")
+    variants.write_text(f"n1=0 c=0 r=0\nn1=0 c=0 r=0 tp=01 rx=01\nn1=0 c=0 r=0 rx=02 io={io}\n", encoding="utf-8")
     for name in ["collect_env.sh", "run_bwtest.sh", "run_analysis.sh"]:
         shell_file(tmp_path / "scripts" / name, f"echo {name} >> trace.txt")
     shell_file(tmp_path / "scripts/run_sweep.sh", '''
@@ -131,6 +132,7 @@ if impls == ['fft2']:
     if args['--fft2-smem-padding'] != '0': label+=',pad='+args['--fft2-smem-padding']
     if args['--fft2-tile-policy'] != '0': label+=',tp='+args['--fft2-tile-policy']
     if args['--fft2-radix-mode'] != '0': label+=',rx='+args['--fft2-radix-mode']
+    if args['--fft2-io-mode'] != '0': label+=',io='+args['--fft2-io-mode']
     impls=[label+']']
 path=Path('results')/tag/'sweep/raw.csv'
 path.parent.mkdir(parents=True)
@@ -160,8 +162,10 @@ PY
     assert len({row["impl"] for row in rows}) == 6
     manifest = read_csv(tmp_path / "results/variants/variants.csv")
     assert [(row["tp"], row["rx"]) for row in manifest] == [("0", "0"), ("1", "1"), ("0", "2")]
+    assert [row["io"] for row in manifest] == ["0", "0", str(io)]
     assert {row["impl"] for row in rows if row["impl"].startswith("fft2[")} == {
-        "fft2[n1=0,c=0,r=0]", "fft2[n1=0,c=0,r=0,tp=1,rx=1]", "fft2[n1=0,c=0,r=0,rx=2]"}
+        "fft2[n1=0,c=0,r=0]", "fft2[n1=0,c=0,r=0,tp=1,rx=1]",
+        "fft2[n1=0,c=0,r=0,rx=2" + (f",io={io}" if io else "") + "]"}
     assert (tmp_path / "results/variants/variants/baseline/sweep/raw.csv").exists()
     assert all((tmp_path / "results/variants" / row["path"] / "sweep/raw.csv").exists()
                for row in read_csv(tmp_path / "results/variants/variants.csv"))
@@ -228,3 +232,30 @@ def test_auto_radix_variant_preserves_v1_and_forwards_auto(bash, tmp_path):
 @pytest.mark.parametrize("value", ["-2", "-01", "auto", "-1,2", "-1 rx=-1"])
 def test_invalid_auto_radix_fields(bash, tmp_path, value):
     test_bad_variant_files_fail_before_running_any_commands(bash, tmp_path, "n1=0 c=0 r=0 rx=" + value)
+
+
+@pytest.mark.parametrize("line", [
+    "n1=0 c=0 r=0 io=3 rx=1", "n1=0 c=0 r=0 io=-1 rx=1",
+    "n1=0 c=0 r=0 io=1,2 rx=1", "n1=0 c=0 r=0 io=99999999999 rx=1",
+    "n1=0 c=0 r=0 io=1 io=2 rx=1", "n1=0 c=0 r=0 io=1",
+    "n1=0 c=0 r=0\nn1=0 c=0 r=0 io=0",
+    "n1=0 c=0 r=0 rx=1 io=01\nn1=0 c=0 r=0 rx=1 io=1",
+])
+def test_invalid_or_duplicate_io_fields(bash, tmp_path, line):
+    test_bad_variant_files_fail_before_running_any_commands(bash, tmp_path, line)
+
+
+def test_io_requires_file(bash):
+    test_variants_require_tuning_axes_in_file(bash, "--fft2-io-mode")
+
+
+def test_io_variants_forward_to_sweep_and_profile(bash, tmp_path):
+    variants = tmp_path / "io.txt"
+    variants.write_text("".join(f"n1=0 c=0 r=0 tp=1 rx=-1 io={io}\n" for io in range(3)))
+    result = subprocess.run([bash, "scripts/run_fft2_variants.sh", "--tag", "io_dry",
+                             "--variants", str(variants), "--log2", "20", "--profile-log2", "20",
+                             "--dry-run", "--ncu"], cwd=ROOT, text=True, capture_output=True, check=True)
+    for script in ["scripts/run_sweep.sh", "scripts/run_ncu.sh"]:
+        commands = [cmd for cmd in printed_commands(result.stdout) if script in cmd
+                    and cmd[cmd.index("--impls") + 1] == "fft2"]
+        assert [cmd[cmd.index("--fft2-io-mode") + 1] for cmd in commands] == ["0", "1", "2"]

@@ -31,6 +31,7 @@ inline std::string fft2_name(fft2::PlanOptions options, bool out_of_place = fals
     if (options.radix_mode != 0) name += ",rx=" + (options.radix_mode == -1 ? std::string("auto") : std::to_string(options.radix_mode));
     if (options.twiddle_mode != 0) name += ",tw=" + std::to_string(options.twiddle_mode);
     if (options.cross_mode != 0) name += ",cx=" + std::to_string(options.cross_mode);
+    if (options.io_mode != 0) name += ",io=" + std::to_string(options.io_mode);
     if (out_of_place) name += ",oop=1";
     return name + "]";
 }

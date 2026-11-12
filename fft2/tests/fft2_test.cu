@@ -7,9 +7,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -117,12 +119,12 @@ struct Counts {
 
 struct Summary {
     Counts total;
-    Counts axes[4][2][3][2][2][2];
+    Counts axes[4][2][3][2][2][2][3];
 
     void add(Outcome result, fft2::PlanOptions options) {
         total.add(result);
         axes[options.radix_mode + 1][options.index_mode][options.smem_padding][options.tile_policy]
-            [options.twiddle_mode][options.cross_mode].add(result);
+            [options.twiddle_mode][options.cross_mode][options.io_mode].add(result);
     }
 };
 
@@ -173,6 +175,13 @@ std::vector<fft2::PlanOptions> variants_for(fft2::PlanOptions options, bool vari
         }
     }
     result.push_back(default_options);  // Default plan at every size, also with --variants.
+    for (int io : {1, 2}) {
+        if ((options.tile_cols != 0 && (options.tile_cols & (options.tile_cols - 1)) != 0)
+            || (options.tile_rows != 0 && (options.tile_rows & (options.tile_rows - 1)) != 0)) { continue; }
+        auto io_options = default_options;
+        io_options.io_mode = io;
+        result.push_back(io_options);
+    }
     return result;
 }
 
@@ -182,7 +191,8 @@ std::string config_label(size_t n, int batch, fft2::PlanOptions options) {
           << " requested_C=" << options.tile_cols << " requested_R=" << options.tile_rows
           << " index_mode=" << options.index_mode << " smem_padding=" << options.smem_padding
           << " tile_policy=" << options.tile_policy << " radix_mode=" << options.radix_mode
-          << " twiddle_mode=" << options.twiddle_mode << " cross_mode=" << options.cross_mode;
+          << " twiddle_mode=" << options.twiddle_mode << " cross_mode=" << options.cross_mode
+          << " io_mode=" << options.io_mode;
     return label.str();
 }
 
@@ -218,8 +228,9 @@ void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_
     for (const auto options : variants_for(base_options, variants, sample_twiddles)) {
         const size_t device_required = 3 * bytes + plan_reserve(n, options);
         // Table generation and chunked comparison do not overlap on the host.
-        const size_t host_required = bytes + std::max(16 * kMiB,
-            options.cross_mode == 1 ? n * sizeof(cuDoubleComplex) : size_t{0});
+        const size_t host_required = bytes + std::max({16 * kMiB,
+            options.cross_mode == 1 ? n * sizeof(cuDoubleComplex) : size_t{0},
+            options.io_mode == 1 && batch == 1 ? bytes + 16 * kMiB : size_t{0}});
         if (!shared_fits(n, options, shared_limit)) {
             std::cout << config_label(n, batch, options) << " SKIP shared_memory_budget"
                       << " optin_limit=" << shared_limit << '\n';
@@ -289,22 +300,45 @@ void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_
 
         for (const auto options : eligible) {
             try {
-                fft2::Plan plan(n, batch, options);
-                if (plan.n() != n || plan.batch() != batch || plan.workspace_bytes() != bytes
-                    || static_cast<size_t>(plan.n1()) * static_cast<size_t>(plan.n2()) != n) {
+                auto plan = std::make_unique<fft2::Plan>(n, batch, options);
+                if (plan->n() != n || plan->batch() != batch || plan->workspace_bytes() != bytes
+                    || static_cast<size_t>(plan->n1()) * static_cast<size_t>(plan->n2()) != n) {
                     throw std::runtime_error("Plan getters / workspace size disagree with requested configuration");
                 }
-                plan.execute(input.complex_data(), output.complex_data(), stream.value);
+                plan->execute(input.complex_data(), output.complex_data(), stream.value);
                 const Error out_of_place = compare(output.complex_data(), reference, stream.value);
                 // Preserve input for the next variant, testing aliasing in the
                 // output buffer with the same original samples.
                 check_cuda(cudaMemcpyAsync(output.data, input.data, bytes, cudaMemcpyDeviceToDevice, stream.value),
                            "restore input for in-place FFT");
-                plan.execute(output.complex_data(), output.complex_data(), stream.value);
+                plan->execute(output.complex_data(), output.complex_data(), stream.value);
                 const Error in_place = compare(output.complex_data(), reference, stream.value);
-                const long double tolerance = variants || options.radix_mode != 0 ? 1e-14L : kTolerance;
-                const bool passed = out_of_place.relative_l2 <= tolerance && in_place.relative_l2 <= tolerance;
-                std::cout << config_label(n, batch, options) << " " << plan.describe()
+                const long double tolerance = options.io_mode == 2 ? kTolerance
+                    : variants || options.radix_mode != 0 ? 1e-14L : kTolerance;
+                const std::string description = plan->describe();
+                plan.reset();  // One workspace at a time, including the bit-identity baseline.
+                bool identical = true;
+                if (options.io_mode == 1 && batch == 1) {
+                    std::vector<cuDoubleComplex> bits(count);
+                    check_cuda(cudaMemcpyAsync(bits.data(), output.data, bytes, cudaMemcpyDeviceToHost, stream.value),
+                               "read io=1 bits");
+                    check_cuda(cudaStreamSynchronize(stream.value), "finish io=1 bit read");
+                    auto baseline_options = options;
+                    baseline_options.io_mode = 0;
+                    fft2::Plan baseline(n, batch, baseline_options);
+                    baseline.execute(input.complex_data(), output.complex_data(), stream.value);
+                    std::vector<cuDoubleComplex> chunk(std::min(count, kMiB));
+                    for (size_t first = 0; first < count; first += chunk.size()) {
+                        const size_t chunk_bytes = std::min(chunk.size(), count - first) * sizeof(cuDoubleComplex);
+                        check_cuda(cudaMemcpyAsync(chunk.data(), output.complex_data() + first, chunk_bytes,
+                                                   cudaMemcpyDeviceToHost, stream.value), "read io=0 bits");
+                        check_cuda(cudaStreamSynchronize(stream.value), "finish io=0 bit read");
+                        identical = identical && std::memcmp(chunk.data(), bits.data() + first, chunk_bytes) == 0;
+                    }
+                    std::cout << config_label(n, batch, options) << " bit_identical=" << identical << '\n';
+                }
+                const bool passed = identical && out_of_place.relative_l2 <= tolerance && in_place.relative_l2 <= tolerance;
+                std::cout << config_label(n, batch, options) << " " << description
                           << " oop_rel_l2=" << out_of_place.relative_l2 << " oop_max_abs=" << out_of_place.max_absolute
                           << " inplace_rel_l2=" << in_place.relative_l2 << " inplace_max_abs=" << in_place.max_absolute
                           << (passed ? " PASS" : " FAIL") << '\n';
@@ -379,6 +413,32 @@ bool api_checks() {
                 throw std::runtime_error("twiddle description / table or shared bytes disagree");
             }
         }
+        for (int mode : {-1, 3}) {
+            expect_error([mode] {
+                fft2::PlanOptions options;
+                options.io_mode = mode;
+                fft2::Plan candidate(size_t{1} << 16, 1, options);
+            }, "invalid io mode");
+        }
+        for (int mode : {1, 2}) {
+            expect_error([mode] {
+                fft2::PlanOptions options;
+                options.io_mode = mode;
+                options.radix_mode = 0;
+                fft2::Plan candidate(size_t{1} << 16, 1, options);
+            }, "register io with legacy radix");
+            for (int lanes : {3, 5, 6, 7}) {
+                for (bool columns : {false, true}) {
+                    expect_error([mode, lanes, columns] {
+                        fft2::PlanOptions options;
+                        options.io_mode = mode;
+                        options.tile_cols = columns ? lanes : 1;
+                        options.tile_rows = columns ? 1 : lanes;
+                        fft2::Plan candidate(size_t{1} << 16, 1, options);
+                    }, "register io with non-power-of-two lanes");
+                }
+            }
+        }
         const fft2::Plan mixed(size_t{1} << 18, 1, {512, 8, 4});
         if (mixed.describe().find("radix_mode=-1(p1=2,p2=1)") == std::string::npos) {
             throw std::runtime_error("auto radix description must resolve each pass independently");
@@ -432,6 +492,7 @@ int main(int argc, char** argv) {
                           << " plus nonzero (twiddle_mode,cross_mode) pairs on radix_mode={0,2}"
                           << " x tile_policy={0,1} at index_mode=smem_padding=0 on sampled sizes,"
                           << " plus the default tile_policy=1, radix_mode=-1 plan at every size,"
+                          << " plus io_mode={1,2} on that plan (io=1 bit-identity vs io=0 at batch 1),"
                           << " where shared memory fits.\n"
                           << "--describe prints batch=1 plans for every N, without executing FFTs.\n";
                 return 0;
@@ -488,11 +549,11 @@ int main(int argc, char** argv) {
         for (const auto options : variants_for({}, variants)) {
             const Counts& axis = summary.axes[options.radix_mode + 1][options.index_mode]
                                              [options.smem_padding][options.tile_policy]
-                                             [options.twiddle_mode][options.cross_mode];
+                                             [options.twiddle_mode][options.cross_mode][options.io_mode];
             std::cout << "VARIANT_SUMMARY index_mode=" << options.index_mode
                       << " smem_padding=" << options.smem_padding << " tile_policy=" << options.tile_policy
                       << " radix_mode=" << options.radix_mode << " twiddle_mode=" << options.twiddle_mode
-                      << " cross_mode=" << options.cross_mode << " passed=" << axis.passed
+                      << " cross_mode=" << options.cross_mode << " io_mode=" << options.io_mode << " passed=" << axis.passed
                       << " failed=" << axis.failed << " skipped=" << axis.skipped << '\n';
             all_axes_executed = all_axes_executed && axis.passed != 0;
         }

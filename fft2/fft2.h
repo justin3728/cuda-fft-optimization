@@ -21,6 +21,8 @@ struct PlanOptions {
     int radix_mode = -1;  // -1 = auto per pass; 0 = v1, 1 = radix-8, 2 = radix-16.
     int twiddle_mode = 0;  // 0 = __ldg roots, 1 = length-L roots staged in shared.
     int cross_mode = 0;    // 0 = high/low product, 1 = one length-N table.
+    int io_mode = 0;       // 0 = v1 I/O, 1 = register I/O, 2 = fused boundary stages.
+                          // Nonzero: register radix, lanes in {1, 2, 4, 8}, data tile <= 163 KiB.
 };
 
 class Plan {

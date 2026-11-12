@@ -7,6 +7,7 @@ tag='' quick=0 dry_run=0 skip_ncu=0 verify_fftw=0 skip_copy_profiles=0
 log2='' batch_modes='' impls='legacy,cufft,vkfft,fft2' trials='' iters=20
 fft2_n1=0 fft2_tile_cols=0 fft2_tile_rows=0 fft2_out_of_place=0
 fft2_index_mode=0 fft2_smem_padding=0 fft2_tile_policy=0 fft2_twiddle_mode=0 fft2_cross_mode=0 fft2_radix_mode=0
+fft2_io_mode=0
 profile_log2='' profile_batch_modes='b1,t25'
 ncu_max_kernels=50 ncu_library_max_kernels=12
 PYTHON=${PYTHON:-python3}
@@ -15,7 +16,7 @@ NCU=${NCU:-ncu}
 t1_parse() {
     while (($#)); do
         case $1 in
-            --tag|--log2|--batch-modes|--impl|--impls|--trials|--iters|--profile-log2|--profile-batch-modes|--ncu-max-kernels|--ncu-library-max-kernels|--fft2-n1|--fft2-tile-cols|--fft2-tile-rows|--fft2-index-mode|--fft2-smem-padding|--fft2-tile-policy|--fft2-twiddle-mode|--fft2-cross-mode|--fft2-radix-mode)
+            --tag|--log2|--batch-modes|--impl|--impls|--trials|--iters|--profile-log2|--profile-batch-modes|--ncu-max-kernels|--ncu-library-max-kernels|--fft2-n1|--fft2-tile-cols|--fft2-tile-rows|--fft2-index-mode|--fft2-smem-padding|--fft2-tile-policy|--fft2-twiddle-mode|--fft2-cross-mode|--fft2-io-mode|--fft2-radix-mode)
                 (($# >= 2)) || { echo "Missing value for $1" >&2; exit 2; }
                 case $1 in
                     --tag) tag=$2;; --log2) log2=$2;; --batch-modes) batch_modes=$2;;
@@ -23,6 +24,7 @@ t1_parse() {
                     --fft2-n1) fft2_n1=$2;; --fft2-tile-cols) fft2_tile_cols=$2;; --fft2-tile-rows) fft2_tile_rows=$2;;
                     --fft2-index-mode) fft2_index_mode=$2;; --fft2-smem-padding) fft2_smem_padding=$2;;
                     --fft2-tile-policy) fft2_tile_policy=$2;; --fft2-radix-mode) fft2_radix_mode=$2;; --fft2-cross-mode) fft2_cross_mode=$2;; --fft2-twiddle-mode) fft2_twiddle_mode=$2;;
+                    --fft2-io-mode) fft2_io_mode=$2;;
                     --profile-log2) profile_log2=$2;; --profile-batch-modes) profile_batch_modes=$2;;
                     --ncu-max-kernels) ncu_max_kernels=$2;; --ncu-library-max-kernels) ncu_library_max_kernels=$2;;
                 esac
@@ -40,6 +42,7 @@ t1_parse() {
                 echo '  [--fft2-index-mode 0|1] [--fft2-smem-padding 0|1|2] (default: 0)'
                 echo '  [--fft2-tile-policy 0|1] [--fft2-radix-mode -1|0|1|2] (default: 0; -1 = auto radix)'
                 echo '  [--fft2-twiddle-mode 0|1] [--fft2-cross-mode 0|1] (default: 0)'
+                echo '  [--fft2-io-mode 0|1|2] (default: 0; nonzero requires register radix)'
                 echo '  [--trials 15] [--iters 20] [--verify-fftw]'
                 echo '  [--profile-log2 16,20,22,24] [--profile-batch-modes b1,t25]'
                 echo '  [--ncu-max-kernels 50] [--ncu-library-max-kernels 12]'
@@ -59,7 +62,7 @@ t1_parse() {
     [[ $batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ && $profile_batch_modes =~ ^[bt][0-9]+(,[bt][0-9]+)*$ ]] || { echo 'Invalid batch modes' >&2; exit 2; }
     [[ $impls =~ ^(legacy|cufft|vkfft|fft2)(,(legacy|cufft|vkfft|fft2))*$ ]] || { echo 'Invalid implementation list' >&2; exit 2; }
     local value
-    for value in "$fft2_n1" "$fft2_tile_cols" "$fft2_tile_rows" "$fft2_index_mode" "$fft2_smem_padding" "$fft2_tile_policy" "$fft2_twiddle_mode" "$fft2_cross_mode"; do
+    for value in "$fft2_n1" "$fft2_tile_cols" "$fft2_tile_rows" "$fft2_index_mode" "$fft2_smem_padding" "$fft2_tile_policy" "$fft2_twiddle_mode" "$fft2_cross_mode" "$fft2_io_mode"; do
         if ! [[ $value =~ ^[0-9]+$ ]] || ((${#value} > 10)) || ((10#$value > 2147483647)); then
             echo 'fft2 options must be nonnegative integers <= INT_MAX (0 = auto)' >&2; exit 2;
         fi
@@ -79,6 +82,10 @@ t1_parse() {
     fft2_cross_mode=$((10#$fft2_cross_mode))
     ((fft2_cross_mode <= 1)) || { echo '--fft2-cross-mode must be 0 or 1' >&2; exit 2; }
     ((fft2_radix_mode <= 2)) || { echo '--fft2-radix-mode must be -1, 0, 1 or 2' >&2; exit 2; }
+    fft2_io_mode=$((10#$fft2_io_mode))
+    ((fft2_io_mode <= 2 && (fft2_io_mode == 0 || fft2_radix_mode != 0))) || {
+        echo '--fft2-io-mode must be 0, 1 or 2; nonzero requires register radix' >&2; exit 2;
+    }
     ((fft2_index_mode <= 1)) || { echo '--fft2-index-mode must be 0 or 1' >&2; exit 2; }
     ((fft2_smem_padding <= 2)) || { echo '--fft2-smem-padding must be 0, 1 or 2' >&2; exit 2; }
     [[ $trials =~ ^[1-9][0-9]*$ && $iters =~ ^[1-9][0-9]*$ ]] || { echo 'Trials/iters must be positive integers' >&2; exit 2; }
@@ -93,7 +100,7 @@ t1_parse() {
     sweep_args=(--tag "$tag" --log2 "$log2" --batch-modes "$batch_modes" --trials "$trials" --iters "$iters")
     fft2_args=(--fft2-n1 "$fft2_n1" --fft2-tile-cols "$fft2_tile_cols" --fft2-tile-rows "$fft2_tile_rows"
                --fft2-index-mode "$fft2_index_mode" --fft2-smem-padding "$fft2_smem_padding"
-               --fft2-tile-policy "$fft2_tile_policy" --fft2-twiddle-mode "$fft2_twiddle_mode" --fft2-cross-mode "$fft2_cross_mode" --fft2-radix-mode "$fft2_radix_mode")
+               --fft2-tile-policy "$fft2_tile_policy" --fft2-twiddle-mode "$fft2_twiddle_mode" --fft2-cross-mode "$fft2_cross_mode" --fft2-io-mode "$fft2_io_mode" --fft2-radix-mode "$fft2_radix_mode")
     ((fft2_out_of_place == 0)) || fft2_args+=(--fft2-out-of-place)
     forward_args=("${sweep_args[@]}" --impls "$impls" --profile-log2 "$profile_log2" --profile-batch-modes "$profile_batch_modes"
                   --ncu-max-kernels "$ncu_max_kernels" --ncu-library-max-kernels "$ncu_library_max_kernels" "${fft2_args[@]}")
@@ -115,6 +122,7 @@ t1_fft2_name() {
     elif ((fft2_radix_mode != 0)); then printf ',rx=%s' "$fft2_radix_mode"; fi
     ((fft2_twiddle_mode == 0)) || printf ',tw=%s' "$fft2_twiddle_mode"
     ((fft2_cross_mode == 0)) || printf ',cx=%s' "$fft2_cross_mode"
+    ((fft2_io_mode == 0)) || printf ',io=%s' "$fft2_io_mode"
     ((fft2_out_of_place == 0)) || printf ',oop=1'
     printf ']'
 }

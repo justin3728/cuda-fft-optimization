@@ -57,3 +57,6 @@ help:
 	@echo "./profile_stages                    Run N=2^20 diagnostic"
 	@echo "make -B CUDA_ARCH=sm_80              Force rebuild after arch changes"
 	@echo "make clean                          Remove generated executables/object"
+
+# Optional measurement tools; does not alter the legacy default target.
+include bench/Makefile.inc

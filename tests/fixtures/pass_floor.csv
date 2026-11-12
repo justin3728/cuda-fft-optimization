@@ -1,0 +1,5 @@
+N,batch,batch_mode,timing_mode,copy_kind,trials,iters_per_trial,time_ms_median,time_ms_min,time_ms_p10,time_ms_p90,bytes_one_pass,status,note
+65536,1,b1,hot,inplace,3,20,0.1,0.09,0.095,0.11,2097152,ok,synthetic test fixture
+65536,1,b1,hot,outofplace,3,20,0.15,0.13,0.14,0.17,2097152,ok,synthetic test fixture
+65536,1,b1,cold,inplace,3,1,0.2,0.18,0.19,0.22,2097152,ok,synthetic test fixture
+16777216,1,b1,hot,inplace,3,20,1,0.9,0.95,1.1,536870912,ok,synthetic test fixture

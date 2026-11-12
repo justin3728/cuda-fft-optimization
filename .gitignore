@@ -3,3 +3,8 @@
 *.log
 benchmark
 profile_stages
+
+# New measurement build products and Python caches.
+results/*/build/
+__pycache__/
+.pytest_cache/

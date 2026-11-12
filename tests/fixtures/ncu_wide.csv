@@ -1,0 +1,4 @@
+# Synthetic wide raw CSV with a units row.
+"ID","Process ID","Kernel Name","Context","Stream","Block Size","Grid Size","gpu__time_duration.sum","dram__bytes_read.sum","dram__bytes_write.sum"
+"","","","","","","","nsecond","byte","byte"
+"7","42","void fft_stage<double, 4>(double2*)","1","7","(256, 1, 1)","(64, 1, 1)","1,000","2,048","4,096"

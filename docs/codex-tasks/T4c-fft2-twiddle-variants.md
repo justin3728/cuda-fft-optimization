@@ -1,21 +1,45 @@
-# Codex Task T4c — fft2 tuning variants, round 3: twiddle access
+# Codex Task T4c — fft2 twiddle access variants (H12)
 
-> Paste everything below the line into Codex **only after T4b has pushed at least its kernel commit** (it builds on it). Repo: `justin3728/cuda-fft-optimization`.
-> Create branch **`codex/t4c-fft2-twiddle`** from `codex/t4b-fft2-radix`. Open a draft PR targeting `codex/t4b-fft2-radix`.
+> Branch **`codex/t4c-fft2-twiddle`** from `main` (T4t and T4b merged, T2d bench axes on #13). PR to `main`. Effort high. Items 1–3 can start now; item 4 is a second round after #13 (T2d) merges and `main` is merged into the branch.
 
 ---
 
 ## Context
-Read `CLAUDE.md`, `docs/optimization-log.md` (L001: legacy's top stall on L4 was `tex_throttle` 59 % from `__ldg` twiddle reads), `fft2/README.md` "Tuning variants". fft2 reads every butterfly twiddle (`roots`) and the pass-1 cross twiddle (`cross_high[e / base] * cross_low[e % base]`, two loads + one complex multiply per element) from global memory via `__ldg`.
+Read `AGENTS.md`, `CLAUDE.md`, and `docs/optimization-log.md` L001 (legacy's top L4 stall was `tex_throttle` 59 % from `__ldg` twiddle reads). In `fft2/fft2.cu`, both block FFT paths (`LegacyFFT` and `RegisterFFT`) read butterfly twiddles from the global `roots` table via `read_twiddle` (`__ldg`). Pass 1 also reads the cross twiddle as `cross_high[q] * cross_low[r]`: two loads and one complex multiply per element.
 
-**H12** (hypothesis): twiddle loads through the texture/L1 path add LSU/L1 pressure; staging the length-L `roots` table in shared memory once per block (≤ L/2·16 B = 32 KiB at L=4096) or computing intra-stage twiddles by recurrence reduces `tex_throttle`/`lg_throttle` stalls. Shared-memory cost may reduce blocks/SM — that trade-off is exactly what A100 must measure.
+**H12** (hypothesis): twiddle loads through L1/tex add LSU pressure. Two alternatives may cut it:
+- stage the length-L `roots` table into shared memory once per block, which costs shared memory and may lower occupancy;
+- read a single cross table of size N instead of the two-table product, which costs footprint.
 
-## Hard constraints
-1. Only touch `fft2/` (but **not** `fft2/tools/`, which another branch owns). Default output unchanged; new opt-in `PlanOptions::twiddle_mode`: 0 = v1 `__ldg` tables, 1 = `roots` staged in shared memory (account for it in `shared_bytes`/tile selection and the reference model), 2 = per-thread recurrence from one table load per stage for the radix-8/16 path only (document the error growth bound; rel L2 vs cuFFT must stay ≤ 1e-14). Add to `describe()`.
-2. Cross twiddle: add `cross_mode`: 0 = v1 two-table product, 1 = single table of size N (memory cost N·16 B, report it in `describe()`), so A100 can show whether the extra multiply or the extra footprint matters.
-3. CPU reference model updated for shared-memory accounting and recurrence accuracy (numpy test of max error vs exact over all L).
-4. Extend `fft2_test --variants` with the new axes on top of the best-guess T4a/T4b defaults only (do not take the full cross product; keep L4 runtime < ~6 min).
-5. Commit and push after each item. No performance claims; ptxas register/spill numbers in the PR description.
+A100 will measure the trade-off. This task only builds the options.
+
+## Task
+1. `PlanOptions::twiddle_mode`, which defaults to 0:
+   - 0 = the current `__ldg` table;
+   - 1 = the block copies `roots` into shared memory before its first stage, and both FFT paths read it from there.
+
+   Include the extra bytes in `shared_bytes` and in tile selection for both tile policies, and in the NumPy reference model. Add the mode to `describe()`.
+2. `PlanOptions::cross_mode`, which defaults to 0:
+   - 0 = the current two-table product;
+   - 1 = one precomputed table of N entries, read once per element.
+
+   Add the mode and the table bytes to `describe()`.
+3. Extend `fft2_test --variants` with these axes on top of `radix_mode` ∈ {0,2} and `tile_policy` ∈ {0,1} only. Do not take the full cross product, and keep L4 runtime under about 6 minutes. Max rel L2 vs reference must stay ≤ 1e-14.
+4. Bench axes, following the T2d pattern exactly:
+   - add `--fft2-twiddle-mode` and `--fft2-cross-mode`;
+   - label suffixes `,tw=M` and `,cx=M`, only when nonzero, after `rx` and before `oop`;
+   - add matching `t1_fft2_name` and variants-file fields, with tests.
+
+## Constraints
+- Touch only `fft2/`, `bench/`, `scripts/`, `tests/`, and `docs/measurement.md`.
+- Default output must be bit-identical to the current one.
+- Diff ≤ 600 lines, excluding tests.
+- No recurrence-based twiddles in this task; mention in the PR if you think they are worth a follow-up.
+- No performance claims. Put the ptxas register and spill numbers in the PR description if you can build; otherwise say that you couldn't.
 
 ## Gate
-CPU: `make -C fft2 test-cpu`, sm_80/sm_89 builds zero warnings. GPU (Claude): `fft2/fft2_test --variants` exit 0 on L4, then A/B on A100.
+- CPU: `make -C fft2 test-cpu`, `pytest tests -q`, `shellcheck scripts/*.sh`.
+- GPU (Claude, L4):
+  - sm_89 and sm_80 builds with zero warnings;
+  - `fft2/fft2_test --variants` exits 0;
+  - a 2-variant sweep at 2^20 b1 (`tw=1 cx=1`) where every row is ok and the labels match.

@@ -1,7 +1,7 @@
-# 專案計畫與狀態（single source of truth）
+# 專案計畫（目標、架構、決策）
 
-> 所有狀態以本檔為準，不依賴對話記憶。每次任務開始／結束、每次 A100 數據回來都要更新「目前狀態」與「任務看板」。
-> 最後更新：2026-11-12（T2 gate A100 通過，見 §7、L003）。前一次：2026-11-11 晚（Codex 週額度重置前一次派出 T3/T2b/T4a/T4b/T5a；T1-fix-1 已由 Codex 推到 PR #1 @ dce6093，待 Claude 複審）
+> 本檔放不常變動的內容：目標、架構、規則、決策紀錄。**現況（看板、下一步）在 `docs/STATUS.md`**，過去的流水帳在 `docs/history.md`。
+> 最後更新：2026-11-12（§6、§7 拆到 STATUS／history；§2 分工改寫）
 
 ## 1. 目標
 
@@ -20,18 +20,21 @@
 
 ## 2. 分工與工作流程
 
-- **Claude（指揮）**：拆任務、寫 Codex prompt（含驗收標準）→ `docs/codex-tasks/`；審 PR；分析 A100 數據；更新本檔與 `optimization-log.md`。
+分工與 PR 規則的正式版本在 `CLAUDE.md`（Roles、PR rules）。摘要：
+
+- **使用者**：核准 GPU 花費與帳號切換、方向決策、審 optimization-log 措辭、M1 檢查點。
+- **Claude Opus**：排任務、寫任務規格、審 kernel 與量測方法、經 Colab CLI 跑 GPU（先徵得同意）、判讀數據、起草 log。
+- **Claude Sonnet（子代理）**：機械工作，例如 merge、push、整理結果摘要、更新看板、格式。
 - **Codex**：實作。沒有 GPU，只能保證「能編譯 + 非 GPU 部分的測試通過」。
-- **使用者**：貼 prompt、在 A100 上跑 `scripts/` 的一鍵腳本、commit 結果到 `results/`、做方向決定。
 - **真相來源**：「算得對、變得快」只以 A100 上的實測為準。Codex 與 Claude 的推論一律標記為「假設」，直到有數據。
 
-循環：任務 prompt → Codex PR → Claude 審 → merge → 使用者在 A100 跑 → commit `results/<tag>/` → Claude 分析、寫 log、更新計畫 → 下一個任務。
+循環：任務規格 → Codex PR（base = main）→ CI + L4 gate → Opus 審 → merge → 累積到一批再上 A100 → Opus 判讀、起草 log → 使用者審措辭 → 下一個任務。
 
 ## 3. 規則
 
 1. legacy 實作保留為可選 baseline 路徑，**數值輸出不得改變**（`fft_cuda.cu` 的 kernel 與 dispatch 不動；若必須動 API 介面，以 wrapper 包，不改 kernel）。
 2. 每次改動在 `docs/optimization-log.md` 記「假設 → ncu 數據 → 結果」，失敗也記。
-3. 狀態只寫在本檔。
+3. 現況只寫在 `docs/STATUS.md`；目標與決策寫在本檔。
 4. 程度上限見 M1；達成後討論再繼續。
 
 ## 4. 現況診斷（讀碼結果 + 上一個 session，未經 ncu 證實者標「待證」）
@@ -70,54 +73,11 @@
 
 ## 6. 里程碑與任務看板
 
-| ID | 任務 | 負責 | 狀態 |
-|---|---|---|---|
-| T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ✅ L4 上通過（2026-11-11）；A100 型號待首次正式執行確認 |
-| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | ✅ 2026-11-12 merge（fix-1 @ dce6093 複審通過：pytest 55 passed、shellcheck 乾淨、full dry-run ncu 擷取上限 334 kernels）。L4 quick 冒煙見 `results/smoke_l4_20261111/`。注意：legacy N=2^16 每 batch 另有一次 D2D `cudaMemcpyAsync`（非 kernel，ncu 看不到），分析趟數時要補上 |
-| ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
-| T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ✅ 2026-11-12 A100 完成（L005） |
-| T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
-| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | ✅ PR #2 已 merge（L4/G4/A100 gate 通過，見 L003） |
-| T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend + 變體 A/B 腳本（`docs/codex-tasks/T2b-bench-fft2-backend.md`，分支疊在 T1+T2 上） | Codex | ✅ 2026-11-12 merge PR #7（pytest、shellcheck 過；full dry-run ncu 上限 352）。GPU 待確認：NVTX 跳脫、每次 2 kernels、oop 正確性。預設變體檔對 H13 覆蓋不足，A100 改用自訂 tile 清單 |
-| T2c | bench／變體腳本加 `--fft2-index-mode`、`--fft2-smem-padding`，讓 H9/H10 能跟 tile sweep 同一次 A100 A/B（`docs/codex-tasks/T2c-bench-fft2-variant-axes.md`） | Codex | 📝 待交給 Codex |
-| T3 CI | GitHub Actions：pytest、shellcheck、dry-run、CUDA 13 容器 compile-only（`docs/codex-tasks/T3-ci.md`；只動 `.github/`，目錄不存在時 skip） | Codex | ✅ 2026-11-12 merge PR #3（main 與 T1+T2 整合兩次 run 皆綠） |
-| Harness | `scripts/colab/run.sh`：一次 GPU 執行的完整流程，失敗也自動 stop | Claude | ✅ 2026-11-11（CPU runtime 端到端測試） |
-| ~~T3~~ | 併入 T2 | — | ✖ |
-| T4a | fft2 變體 1：32-bit shift/mask 索引（H9）、shared padding（H10），opt-in，預設輸出不變 | Codex | ✅ 2026-11-12 merge PR #6（預設維持 v1 算式）。整合修正 db09a7a：ncu 名稱檢查接受 template kernel。GPU 待驗：`fft2_test --variants`。bench 尚不能選 index_mode/padding → T2c |
-| T4b | fft2 變體 2：register radix-8/16（H11）＋ **H13 附錄**（shared 只做交換、`tile_policy` 佔用率導向，2026-11-12 加），疊在 T4a 上 | Codex | 📝 尚未開始；連同附錄交給 Codex |
-| T4c | fft2 變體 3：twiddle 存取（shared 暫存 / 遞推 / 單表 cross twiddle，H12），疊在 T4b 上 | Codex | 📤 T4b 推上去後接著做 |
-| T6 | `scripts/a100_session.sh`：一次 A100 allocation 跑完 gate + T1 full + 變體 + 報告，可續跑、有時間預算 | Codex | 📤 2026-11-11 晚；分支已有 commits，尚未開 PR |
-| T7 | `fft2/tools/plan_explorer.py`：不靠 GPU 預測 occupancy、coalescing、bank conflict（標為模型預測） | Codex | 📤 2026-11-11 晚；分支已有 commits，尚未開 PR |
-| T8 | README 作品集骨架（不含任何數字，留 placeholder 給 T5a 填） | Codex | 📤 2026-11-11 晚；分支已有 commits，尚未開 PR |
-| T4.x | A100 一次 allocation A/B 所有變體 → 依 ncu 決定預設值（每項一個 log 條目） | Claude | ⏳ |
-| T5a | `make_report.sh`：從 `results/<tag>/` 自動產生瓶頸分析 Markdown（不手打數字） | Codex | ✅ 2026-11-12 merge PR #5。已知缺口：fft2 標籤列被濾掉 → T5a-fix-1 |
-| T5a-fix-1 | 報告產生器以 family 比對 impl，保留 `fft2[...]` 各變體（`docs/codex-tasks/T5a-fix-1.md`） | Codex | 📝 待交給 Codex |
-| T5 | batched 調優、README 瓶頸分析與 before/after | Codex / Claude | ⏳ |
-| M1 檢查點 | 與使用者討論是否追 cuFFT | 全體 | ⏳ |
+→ 已移到 `docs/STATUS.md`（現況）與 `docs/history.md`（拆檔前的完整看板）。
 
 ## 7. 目前狀態
 
-- 已讀完 `fft_cuda.cu`、`fft_cuda.h`、`benchmark.cpp`、`profile_stages.cu`、`Makefile`、`results/`。
-- 建立本檔、`docs/optimization-log.md`、T1 prompt。
-- T1 已交給 Codex（2026-11-11）。平台定為 Colab A100（§8）。
-- T0 preflight 在 Colab L4 通過：ncu counter 可用，環境為 CUDA 13.0（見 §8）。
-- GPU 執行改走 Colab CLI（§8）。PR #1（T1）已審 + 在 L4 跑 quick 全通過；修正輪 T1-fix-1 已寫好。
-- T2（PR #2）L4 gate 通過（2026-11-11，`notebooks/t2_gate.ipynb` Run all）：正確性全過、2 kernels/execute；2^24 b1 pass1 讀取 1.32 趟（校正後）＝ L4 上 C=1 退化所致。
-- **2026-11-11 晚**：GPU 是瓶頸，先把不需 GPU 的工作全部派給 Codex（T3、T2b、T4a→T4b→T4c、T5a、T6、T7、T8；T3/T2b/T4a/T5a 已推上 PR #3/#7/#6/#5，分支／目錄互不重疊）。下次 A100 allocation 目標：T2 gate + T1 full + T4 變體 A/B 一次跑完。
-- **2026-11-12**：T2 gate 在 **A100-SXM4-40GB 通過**（使用者用另一個帳號連上，Colab UI Run all）。正確性 28/0/1，每次 execute 2 kernels，DRAM 讀 1.00 趟、寫 0.94–0.98 趟。另在 G4（sm_120）通過正確性。見 L003、`results/t2_gate_a100_20261112/`、`results/t2_gate_g4_20261112/`。
-- v1 在 A100 上 2^24 b1 合計 3.22 ms，等效頻寬只有 282–408 GB/s。ncu 顯示**佔用率被 shared memory 限在 12.5%**（每 SM 1 block）。
-- 2026-11-12：使用者把規劃安排交給 Claude（§8）。Codex 分支已推上：T1（含 fix-1）、T2b、T3、T4a、T5a、T6、T7、T8；T4b、T4c 尚未開始。
-- **2026-11-12（續）**：PR #1、#3、#7、#6、#5 全部審完並 merge 進 main（含整合修正 db09a7a）。新開 T2c、T5a-fix-1 兩個小修正 prompt。T6/T7/T8 分支有 commits 但沒開 PR。
-- **2026-11-12 L4 冒煙（L004）**：merge 後的工具全部在 GPU 上跑通（fft2_test --variants、T1 quick 含 fft2、變體 runner + ncu）。H13 縮小版顯示佔用率與合併存取有取捨，batched 最佳 k=4。使用 1.24 單位。下一步：A100（T1 full + H13 tile sweep，含 2^24 與 batched）。
-- **2026-11-12 A100（L005，草稿）**：T1 full + H13 sweep 完成，`results/t1_a100_20261112/`、`results/h13_a100_20261112/`。實測 HBM copy 1363 GB/s、L2 copy 2858 GB/s。cuFFT 2^23–24 用 3 趟、每趟約 88%。fft2 v1 是 cuFFT 的 1.2–2.9 倍時間。H13 在 2^18–2^22 證實（k=2 最佳，最多快 1.87 倍），在 2^24 不成立 → 下一步：tile_policy 小改 + T4b（register radix）。
-- **下一步（Claude 排定，依序）**
-  1. merge PR #2（T2）。
-  2. 審 + merge，依相依順序：PR #1 T1（複審 fix-1 @ dce6093）→ T3 CI → T2b（疊在 T1+T2 上）→ T4a → T6 → T5a / T7 / T8。每個審查發現就寫成修正 prompt 交給 Codex。
-  3. T4b 加上 H13 附錄（`docs/codex-tasks/T4b-fft2-register-radix.md`：register 存資料、shared 只做交換、`tile_policy` 佔用率導向）。T4b 尚未開始，直接連同附錄交給 Codex。
-  4. **下次 A100 allocation**（T6 `a100_session.sh`，或在 T6 merge 前用 notebook 手動跑）：T1 full（實測頻寬上限 + cuFFT/VkFFT baseline）＋ T2b sweep 加 `--fft2-tile-cols/--fft2-tile-rows ∈ {1,2,4,8}`。這個 tile sweep 不需新程式就能先驗 H13 ＋ T4a 變體 A/B。
-  5. 依 4 的 ncu 數據定調優順序，H13 預期在 H9 之前。
-- ~~下一步（2026-11-11 晚）：A100 跑 `notebooks/t2_gate.ipynb` → 通過即 merge PR #2；調優第一項建議 = 內層 64-bit 除法改 32-bit/shift（待 A100 ncu 證實）。~~
-- **下一步（舊）**：(1) T1-fix-1 已交給 Codex（推到 PR #1 分支）→ Claude 複審 → merge → A100 跑 T1 full；(2) 平行：T2 prompt 交給 Codex（新分支 `codex/t2-two-pass-v1`，只動 `fft2/`）→ Claude 在 L4/A100 跑 `fft2_test` 驗證正確性。
+→ 已移到 `docs/STATUS.md`。過去的流水帳在 `docs/history.md`。
 
 ## 8. 決策紀錄
 
@@ -130,7 +90,8 @@
 | 2026-11-12 | **A100 難分配時，G4（RTX PRO 6000 Blackwell，sm_120）只用來驗正確性**，正式平台仍是 A100-SXM4-40GB；不改用 G4 當正式平台 | G4 的 FP64 很弱，FP64 FFT 在 G4 上推論為計算瓶頸，「% of 實測頻寬上限」的分析不成立。Colab 選單上的 H100 需升級方案，目前不可選。A100 連不到時可換帳號再試 |
 
 ### Colab CLI 操作備忘
-- 0.7.5 的 `colab ssh -s S -- CMD` 不可用；改用 `colab exec -s S -f script.py`（在 kernel 裡 `subprocess.Popen` 背景執行 shell 腳本），長任務以 `/content/<name>_done` 檔案輪詢完成。
+- 2026-11-12 起首選 SSH（`colab ssh --proxy-mode` 當 OpenSSH ProxyCommand），L004、L005 都這樣跑；細節見 `CLAUDE.md`。
+- 0.7.5 的 `colab ssh -s S -- CMD` 這種直接帶指令的寫法不可用。舊的備援做法：`colab exec -s S -f script.py`（在 kernel 裡 `subprocess.Popen` 背景執行 shell 腳本），長任務以 `/content/<name>_done` 檔案輪詢完成。
 - 程式碼在 runtime 上直接 `git clone` 公開 repo 的分支；結果 `tar` 後 `colab download` 回本機，由 Claude 挑精簡檔案 commit（完整 ncu 報告不進 repo）。
 
 ### Colab 對工作流程的影響（原 notebook 方案，保留作備援）
@@ -153,4 +114,4 @@
 1. ~~A100 型號~~ → 已決定：Colab A100-SXM4-40GB。
 2. ~~Colab 上 ncu 是否能讀 counter~~ → ✅ 可以（T0，L4）。A100 型號名稱與 counter 權限在第一次 A100 執行時由 notebook 再確認。
 3. batched 的定義（預設：N×batch 固定為 2^25 個元素 = 512 MiB，遠超 L2，看 HBM 行為；另加 batch=8 小批次）。可調。
-4. T1 的 `run_t1_all.sh` 需要一個 Colab notebook 包裝（clone、build、跑、push）；待 T1 PR 審完後作為 T1b 交給 Codex，或由 Claude 直接寫（檔案很小）。
+4. ~~T1 的 `run_t1_all.sh` 需要 Colab notebook 包裝~~ → 不需要（T1b 取消，改走 Colab CLI）。

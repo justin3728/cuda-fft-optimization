@@ -1,33 +1,49 @@
 # CLAUDE.md — how to work in this repo
 
-**Start every session by reading `docs/plan.md`** (state, task board, decisions, next step) and the latest entries of `docs/optimization-log.md`. Do not rely on chat memory; if something matters later, write it into one of those files.
+**Start every session by reading `docs/STATUS.md`** (task board, next steps, open decisions; kept under ~60 lines). Open `docs/plan.md` (goals, architecture, decisions) and `docs/optimization-log.md` only for the sections the task needs. Do not rely on chat memory; if something matters later, write it into one of those files.
 
 ## Project in one paragraph
 FP64 complex-to-complex forward CUDA FFT being rebuilt from a 5-pass legacy pipeline into a **2-pass** design that approaches A100 memory-bandwidth limits (N = 2^16–2^24, batch 1 and batched). The core deliverable is being able to answer "how do you know it's fast": per-kernel Nsight Compute achievement vs **measured** HBM/L2 limits, with the remaining gap explained. Beating cuFFT in that range is a stretch goal; VkFFT is a second baseline and design reference. Milestone 1 = 2-pass + complete measurement + README bottleneck analysis with before/after — then stop and discuss with the owner.
 
 ## Roles
-- **Claude (director)**: splits tasks, writes Codex prompts with acceptance criteria into `docs/codex-tasks/`, reviews Codex PRs, runs GPU jobs on Colab, analyzes data, updates `docs/plan.md` and `docs/optimization-log.md`.
-- **Codex**: implements. Has no GPU; the owner pastes prompts from `docs/codex-tasks/`. Codex pushes to its own `codex/*` branches and opens PRs.
-- **Owner**: pastes prompts, approves spending (GPU time), makes direction decisions. Writes in Traditional Chinese; reply in Traditional Chinese.
+Planning was delegated to Claude on 2026-11-12 (`docs/plan.md` §8).
+
+| Who | Does |
+|---|---|
+| **Owner** | Approves GPU spending and handles Colab account switching; makes direction decisions; approves every optimization-log conclusion (Claude drafts, owner rewords); M1 checkpoint. Pastes prompts into Codex. Writes in Traditional Chinese; reply in Traditional Chinese. |
+| **Claude Opus** (director) | Picks the next hypothesis, writes task specs into `docs/codex-tasks/`, reviews kernel and measurement-method diffs, runs GPU jobs via the Colab CLI (after asking), interprets data, drafts log entries. |
+| **Claude Sonnet** (subagent) | Mechanical work Opus delegates: merge and push reviewed PRs, run CPU checks (pytest, shellcheck) and report pass/fail, condense a results directory into a short digest, update the `docs/STATUS.md` board, formatting and line-ending fixes, first-pass review of CI/script/docs-only PRs. |
+| **Codex** | Implements. Has no GPU. Pushes to its own `codex/*` branches and opens PRs. |
+
+- Waiting for a GPU job to finish needs no model: use a background wait or monitor, not a polling agent.
 - Only GPU measurements count as evidence of "correct" or "faster". Label anything else as a hypothesis.
-- **This is the owner's job-hunting portfolio.** Keep the owner in the loop on judgment, not on mechanics: the owner decides new task directions and approves every optimization-log conclusion (Claude drafts, owner reviews and rewords). Fix rounds and other mechanical dispatch may go to Codex directly via `codex exec` (see below).
+- **This is the owner's job-hunting portfolio.** Keep the owner in the loop on judgment, not on mechanics. Fix rounds and other mechanical dispatch may go to Codex directly via `codex exec` once that path has been tried and confirmed.
+
+## PR rules
+1. Every Codex branch starts from `main`, and every PR targets `main`. No stacked PRs; if a task depends on another, dispatch it after the first one merges.
+2. Merge only when CI is green and, for any PR touching `fft2/` or `bench/`, the L4 gate exits 0. Run the gate **before** merging, not after.
+3. Merge through GitHub (button or API) so the PR shows as merged. Write the review verdict as a PR comment, not only in the merge commit.
+4. Keep each PR under ~600 changed lines (excluding `results/`); split larger tasks.
+5. At most 2 Codex PRs open at once. Do not dispatch tasks without a recorded hypothesis or a confirmed gap behind them.
+6. Book an A100 only when a batch of A/B comparisons is ready to run together.
 
 ## Writing Codex tasks (`docs/codex-tasks/*.md`)
 - **Size every task to fit one Codex 5-hour usage window** (the owner is on ChatGPT Plus). Split larger work into sequential tasks.
 - Every prompt must say: commit and push to the task branch after each completed item (WIP is fine), so a usage-limit stop never strands work locally.
 - Every prompt defines a **gate command**: one command run on the GPU whose exit code decides pass/fail (e.g. `fft2/fft2_test`, or `results/<tag>/stage_status.csv` all OK). Gate on Colab **L4 first** (cheap, correctness/compile), then **A100** only for performance. Batch several A100 experiments into one allocation.
 - Restrict each task to its own directories so parallel Codex tasks never touch the same files.
-- Mechanical dispatch: `C:\Users\Justin\AppData\Local\OpenAI\Codex\bin\<hash>\codex.exe exec ...` (bundled with the Codex desktop app, logged in with the owner's account; same quota). Find the exact path with `find /c/Users/Justin/AppData/Local/OpenAI/Codex/bin -name codex.exe`.
+- Keep a task spec to about one page: goal and hypothesis ID, allowed and forbidden paths, at most 4 deliverables, CPU gate command, GPU gate command with expected output files, a diff-size cap, and "no performance claims". `T2c-bench-fft2-variant-axes.md` is the model to follow.
+- Mechanical dispatch: `codex exec` from the Codex desktop app's bundled CLI (same quota). Its local path is in the operator's private notes, not in this repo.
 
 ## Hard rules
 1. Legacy implementation (`fft_cuda.cu`, `fft_cuda.h`, `benchmark.cpp`, `profile_stages.cu`) stays as a selectable baseline; its numeric output must not change. New implementation lives in `fft2/`.
 2. Every change → an entry in `docs/optimization-log.md`: hypothesis → ncu data (with `results/` path) → outcome. Failures too.
-3. State lives only in `docs/plan.md`.
+3. Current state lives only in `docs/STATUS.md`; goals, architecture, and decisions in `docs/plan.md`.
 4. Official numbers only from **A100-SXM4-40GB**. Other GPUs (e.g. Colab L4) are for smoke tests; say so wherever their numbers appear.
 5. Never fabricate performance numbers.
 
 ## Running GPU jobs (Colab CLI)
-**Use `scripts/colab/run.sh`** for every GPU run: it allocates, clones a branch, runs one command, polls, downloads the requested path into `$TMP/colab_runs/<name>/`, and **always stops the runtime** (even on failure or Ctrl-C). Example:
+**Preferred: SSH** (used for L004 and L005; see below). `scripts/colab/run.sh` is the older `colab exec`-based wrapper: it allocates, clones a branch, runs one command, polls, downloads into `$TMP/colab_runs/<name>/`, and always stops the runtime. It has not been updated for SSH yet. Example:
 
 ```bash
 scripts/colab/run.sh --gpu L4 --name t2gate --branch codex/t2-two-pass-v1 \
@@ -36,7 +52,7 @@ scripts/colab/run.sh --gpu L4 --name t2gate --branch codex/t2-two-pass-v1 \
 
 Then copy the compact subset into `results/` and commit. The raw CLI, for anything the script does not cover:
 
-The official `google-colab-cli` (0.7.5) is installed in the owner's **WSL Ubuntu** on their home PC (logged in with `--auth oauth2`). From Git Bash on that machine:
+The official `google-colab-cli` (0.7.5) is installed on the operator's machine (logged in with `--auth oauth2`). Typical commands:
 
 ```bash
 wsl -e bash -lc 'colab --auth oauth2 usage'                      # balance / rate
@@ -48,7 +64,7 @@ wsl -e bash -lc 'colab --auth oauth2 stop -s NAME'
 ```
 
 - **Ask the owner before allocating any runtime** (A100 or L4); **always `stop` right after** the results are downloaded. L4 ≈ 1.94 units/hr.
-- **SSH works (verified 2026-11-12, CPU runtime)** through `colab ssh --proxy-mode` as an OpenSSH ProxyCommand. The owner's WSL `~/.ssh/config` has `Host colab-*`, which maps `colab-NAME` to session `NAME`, user root.
+- **SSH works (verified 2026-11-12; used for the L005 A100 run)** through `colab ssh --proxy-mode` as an OpenSSH ProxyCommand. A local `~/.ssh/config` entry maps `colab-NAME` to session `NAME`, user root.
   - Flow: `colab --auth oauth2 new -s NAME --gpu A100`, then `ssh -o BatchMode=yes colab-NAME 'CMD'`, then `colab --auth oauth2 stop -s NAME`.
   - The remote exit code comes back through ssh, and `git clone` of the public repo works on the runtime.
   - Prefer this for gate commands. For long jobs use `nohup` plus a done-file, and poll over ssh.
@@ -56,11 +72,11 @@ wsl -e bash -lc 'colab --auth oauth2 stop -s NAME'
 - On the runtime, `git clone` the public repo branch directly (no upload of code needed). `tar` results excluding `build/`, download, and commit only a compact subset (CSVs, `limits.json`, ncu summary `.md`/`.csv`, VkFFT manifests). Full `.ncu-rep` files and logs stay out of the repo.
 - A100 allocation can fail (`Bad Gateway`, timeouts); retry once, then ask whether to fall back to L4.
 - **Do not request High-RAM** (`--high-mem` in the CLI, "大量 RAM" in the UI). The owner observed that A100 is much easier to get with it off. The CLI default is off. The jobs here do not need it.
-- **Accounts:** the CLI credential is `~/.config/colab-cli/token.json`. Since 2026-11-12 it holds the owner's second account, the one that got an A100. The first account's token is saved as `token.account1.json`. To switch, rename the files; there is no login command, and a missing `token.json` triggers a browser OAuth flow the owner must complete.
+- **Accounts:** A100 availability differs between Google accounts. Switching accounts is the owner's call; the mechanics are in the operator's private notes.
 - Colab environment (Nov 2026): CUDA 13.0, driver 580.x, ncu 2025.3.1 preinstalled with counter access, root, Python 3.13. CUDA 13 cannot build `sm_61` (legacy Makefile default) → always pass `CUDA_ARCH=sm_80` (`sm_89` on L4).
 - Notebook fallback (owner presses Run all): `notebooks/colab_preflight.ipynb`. Never drive Colab through a browser.
 
-## Measurement tooling (PR #1, `codex/t1-measurement-tooling`)
+## Measurement tooling
 `scripts/run_t1_all.sh --tag TAG [--quick] [--skip-ncu] [--dry-run]` builds and runs: env capture, bandwidth limits (`bandwidth/limits.json`, per-size `pass_floor.csv`), sweep (legacy/cuFFT/VkFFT, hot & cold timing, correctness vs cuFFT), VkFFT kernel export, ncu (NVTX-filtered), analysis. Details: `docs/measurement.md`.
 
 ## Measurement rules learned so far
@@ -69,5 +85,5 @@ wsl -e bash -lc 'colab --auth oauth2 stop -s NAME'
 - ncu defaults lock clocks to base and flush caches; the scripts use `--clock-control none` and record the cache policy. State the settings next to any ncu number.
 
 ## Git
-- Work on branches; the owner has allowed Claude to push docs/results updates to `main` in this workflow. Codex PRs are reviewed before merge; never push to a `codex/*` branch.
+- Work on branches; the owner has allowed Claude to push docs/results updates to `main` in this workflow. Codex PRs follow the PR rules above; never push to a `codex/*` branch.
 - Commit messages end with the co-author line from the session's attribution instructions.

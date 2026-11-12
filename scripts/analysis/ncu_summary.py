@@ -172,19 +172,13 @@ def sampling_metadata(config: dict, captured: int) -> dict:
     if expected < captured:
         raise ValueError("expected_kernels cannot be smaller than captured_kernels")
     sampled = captured < expected
-    if config.get("impl", "").split("[", 1)[0] == "fft2" and (captured != 2 or expected != 2):
+    if config.get("impl", "").removesuffix("_oop") == "fft2" and (captured != 2 or expected != 2):
         raise ValueError("fft2 requires a complete capture of exactly two kernels; sampling is not supported")
     if declared_sampled is not None and declared_sampled != sampled:
         raise ValueError("sampled flag disagrees with captured/expected kernel counts")
     limit = count("capture_limit")
     if limit is not None and captured > limit:
         raise ValueError("raw CSV count exceeds declared capture_limit")
-    per_batch = count("kernels_per_batch")
-    if config.get("impl") == "legacy" and per_batch is not None:
-        if captured % per_batch or expected % per_batch:
-            raise ValueError("legacy sampling must contain complete batches")
-        if expected != int(config["batch"]) * per_batch:
-            raise ValueError("legacy expected_kernels disagrees with batch*kernels_per_batch")
     return {"sampled": sampled, "captured_kernels": captured, "expected_kernels": expected,
             "sampling_ratio": captured / expected, "extrapolation_factor": expected / captured}
 
@@ -197,14 +191,14 @@ def validate_fft2_capture(kernels: list[Kernel]) -> None:
 
 def summarize(kernels: list[Kernel], config: dict, limits: dict) -> tuple[list[dict], dict]:
     config = {"impl_detail": "", **config}
-    is_fft2 = config.get("impl", "").split("[", 1)[0] == "fft2"
+    is_fft2 = config.get("impl", "").removesuffix("_oop") == "fft2"
     if is_fft2:
         validate_fft2_capture(kernels)
     rows = []
     sampling = sampling_metadata(config, len(kernels))
     n, batch = int(config.get("N", 0)), int(config.get("batch", 0))
     l2_size = positive(limits.get("l2_size_bytes"))
-    buffer_count = 3 if is_fft2 and ",oop=1]" in config["impl"] else 2
+    buffer_count = 3 if is_fft2 and config["impl"].endswith("_oop") else 2
     fits_l2 = buffer_count * 16 * n * batch <= l2_size if n > 0 and batch > 0 and l2_size is not None else None
     hbm, l2 = positive(limits.get("hbm_copy_GBs")), positive(limits.get("l2_copy_GBs_plateau"))
     if hbm is None or l2 is None:
@@ -379,13 +373,13 @@ def run(root: Path) -> None:
             text += (f"\n**Extrapolated config totals:** captured {total['captured_kernels']} of "
                      f"{total['expected_kernels']} expected kernel launches "
                      f"(sampling ratio {total['sampling_ratio']:.6g}); multiply captured totals by "
-                     f"{total['extrapolation_factor']:.6g}. This is a bounded prefix of complete legacy batches, "
+                     f"{total['extrapolation_factor']:.6g}. This is a bounded prefix of the launches, "
                      "not a measurement of every batch. Per-kernel metrics remain as captured; "
                      "pct_config_time is each kernel's fraction of captured kernel time.\n")
         else:
             text += f"\nComplete capture: {total['captured_kernels']} kernel launches; totals are measured, not extrapolated.\n"
         text += "\nConfig totals (raw traffic ratio = total DRAM bytes / (2 × 16 × N × batch); calibrated passes divide by the HBM copy traffic factor):\n\n" + md_table([total], TOTAL_FIELDS)
-        text += "\nLegacy copy-normalized percentages are retained. pct_mixed_hbm_limit adds read/write service times at their separately measured peaks; pct_l2_limit uses the measured read plateau. NCU replay durations are distinct from unprofiled sweep times.\n"
+        text += "\nCopy-normalized percentages are retained. pct_mixed_hbm_limit adds read/write service times at their separately measured peaks; pct_l2_limit uses the measured read plateau. NCU replay durations are distinct from unprofiled sweep times.\n"
         if entry["impl"] == "vkfft":
             manifest = root / "vkfft_kernels" / f"N{entry['N']}_b{entry['batch']}" / "manifest.json"
             if manifest.exists():

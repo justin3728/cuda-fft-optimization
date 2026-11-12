@@ -2,14 +2,12 @@
 
 namespace measure {
 class Fft2 final : public FftBackend {
-    fft2::PlanOptions options_;
     bool out_of_place_;
     DeviceBuffer<cuDoubleComplex> data_, output_;
     std::unique_ptr<fft2::Plan> plan_;
 public:
-    Fft2(fft2::PlanOptions options, bool out_of_place)
-        : options_(options), out_of_place_(out_of_place) {}
-    std::string name() const override { return fft2_name(options_, out_of_place_); }
+    explicit Fft2(bool out_of_place) : out_of_place_(out_of_place) {}
+    std::string name() const override { return fft2_name(out_of_place_); }
     std::string detail() const override { return plan_ ? plan_->describe() : ""; }
     bool supports(size_t n, int batch, std::string* why) const override {
         if (n < (size_t{1} << 16) || n > (size_t{1} << 24) || (n & (n - 1)) || batch < 1) {
@@ -17,7 +15,7 @@ public:
             return false;
         }
         // Plan owns one full workspace; the adapter owns one or two data
-        // buffers. All four twiddle tables have at most 4096 entries each.
+        // buffers. The two twiddle and two cross tables have at most 4096 entries each.
         const size_t buffers = out_of_place_ ? 3 : 2;
         const size_t table_budget = 4 * 4096 * sizeof(cuDoubleComplex);
         if (size_t(batch) > (std::numeric_limits<size_t>::max() - table_budget) /
@@ -41,7 +39,7 @@ public:
         if (!supports(n, batch, &reason)) throw std::runtime_error(reason);
         data_.allocate(elements(n, batch));
         if (out_of_place_) output_.allocate(elements(n, batch));
-        plan_ = std::make_unique<fft2::Plan>(n, batch, options_);
+        plan_ = std::make_unique<fft2::Plan>(n, batch);
     }
     cuDoubleComplex* buffer() override { return data_.get(); }
     cuDoubleComplex* output() override { return out_of_place_ ? output_.get() : data_.get(); }
@@ -54,7 +52,7 @@ public:
         data_.reset();
     }
 };
-std::unique_ptr<FftBackend> make_fft2(fft2::PlanOptions options, bool out_of_place) {
-    return std::make_unique<Fft2>(options, out_of_place);
+std::unique_ptr<FftBackend> make_fft2(bool out_of_place) {
+    return std::make_unique<Fft2>(out_of_place);
 }
 } // namespace measure

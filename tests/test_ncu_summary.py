@@ -10,7 +10,7 @@ from io_utils import read_csv, write_csv
 from ncu_summary import (L2_RESIDENT_NOTE, convert, copy_calibration, main, parse_raw, retain_reports,
                          run, sampling_metadata, select_metrics, summarize)
 
-CONFIG = {"impl": "legacy", "N": "65536", "batch": "1", "batch_mode": "b1", "cache_control": "all"}
+CONFIG = {"impl": "cufft", "N": "65536", "batch": "1", "batch_mode": "b1", "cache_control": "all"}
 LIMITS = {"hbm_copy_GBs": 1000, "hbm_read_GBs": 1500, "hbm_write_GBs": 1200,
           "l2_copy_GBs_plateau": 4000, "l2_read_GBs_plateau": 5000, "l2_size_bytes": 48 * 1024**2}
 
@@ -104,7 +104,7 @@ def test_empty_capture_fails_loudly(tmp_path):
         parse_raw(path)
 
 
-def prepare_run(tmp_path, fixtures, impl="legacy"):
+def prepare_run(tmp_path, fixtures, impl="cufft"):
     (tmp_path / "bandwidth").mkdir()
     (tmp_path / "bandwidth/limits.json").write_text(json.dumps(LIMITS), encoding="utf-8")
     (tmp_path / "ncu").mkdir()
@@ -149,7 +149,7 @@ def test_report_retention_preserves_only_requested_single_batch_reports(tmp_path
     directory = tmp_path / "ncu"
     directory.mkdir()
     keep = directory / "cufft_N1048576_b1_b1_cache_all.ncu-rep"
-    move = directory / "legacy_N65536_b512_t25_cache_all.ncu-rep"
+    move = directory / "vkfft_N65536_b512_t25_cache_all.ncu-rep"
     for path in [keep, move]:
         path.write_bytes(b"synthetic report content")
     result = retain_reports(tmp_path, max_bytes=1, spill=tmp_path / "spill")
@@ -202,11 +202,11 @@ def test_ncu_2025_shared_memory_unit_regression(fixtures):
     assert not any("unknown byte unit" in str(item.message) for item in caught)
 
 
-def test_sampled_legacy_totals_are_extrapolated_but_kernel_metrics_unchanged(fixtures):
+def test_sampled_totals_are_extrapolated_but_kernel_metrics_unchanged(fixtures):
     base = parse_raw(fixtures / "ncu_raw.csv")[0]
     kernels = [replace(base, identity=str(i)) for i in range(50)]
     config = {**CONFIG, "batch": "512", "batch_mode": "t25", "captured_kernels": "50",
-              "expected_kernels": "2560", "sampled": "true", "capture_limit": "50", "kernels_per_batch": "5"}
+              "expected_kernels": "2560", "sampled": "true", "capture_limit": "50"}
     rows, total = summarize(kernels, config, LIMITS)
     assert total["captured_kernels"] == 50 and total["expected_kernels"] == 2560
     assert total["sampling_ratio"] == pytest.approx(50 / 2560)
@@ -236,7 +236,7 @@ def test_sampled_run_labels_markdown_and_preserves_measured_totals(fixtures, tmp
                 writer.writerow([index, 123, base.name, 1, 7, base.block, base.grid, name, unit, value])
     entry = {**CONFIG, "batch": "512", "batch_mode": "t25", "raw_csv": "sample.csv", "status": "ok",
              "captured_kernels": "10", "expected_kernels": "2560", "sampled": "true",
-             "capture_limit": "10", "kernels_per_batch": "5"}
+             "capture_limit": "10"}
     write_csv(directory / "index.csv", [entry], list(entry))
     with pytest.warns(UserWarning, match="HBM copy calibration"):
         run(tmp_path)
@@ -257,7 +257,6 @@ def test_sampled_run_labels_markdown_and_preserves_measured_totals(fixtures, tmp
     ({"expected_kernels": "4", "sampled": "false"}, "sampled flag"),
     ({"sampled": "unknown"}, "unknown sampling state"),
     ({"capture_limit": "1"}, "exceeds declared"),
-    ({"expected_kernels": "10", "sampled": "true", "kernels_per_batch": "5", "batch": "2"}, "complete batches"),
 ])
 def test_invalid_sampling_declarations_are_not_silently_scaled(extra, message):
     with pytest.raises(ValueError, match=message):

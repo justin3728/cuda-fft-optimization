@@ -15,25 +15,6 @@ using namespace measure;
 namespace {
 constexpr const char* header = "impl,N,log2N,batch,batch_mode,timing_mode,trials,iters_per_trial,time_ms_median,time_ms_min,time_ms_p10,time_ms_p90,rel_l2_err,max_abs_err,status,note,impl_detail\n";
 const std::vector<std::string> modes = {"hot", "cold"};
-fft2::PlanOptions fft2_options(const Options& opts) {
-    // Pin bench defaults to explicit v1, independently of PlanOptions defaults.
-    fft2::PlanOptions options{opts.nonnegative_integer("--fft2-n1"), opts.nonnegative_integer("--fft2-tile-cols"),
-                              opts.nonnegative_integer("--fft2-tile-rows"),
-                              opts.nonnegative_integer("--fft2-index-mode"), opts.nonnegative_integer("--fft2-smem-padding"),
-                              opts.nonnegative_integer("--fft2-tile-policy"),
-                              opts.get("--fft2-radix-mode", "0") == "-1" ? -1 : opts.nonnegative_integer("--fft2-radix-mode"),
-                              opts.nonnegative_integer("--fft2-twiddle-mode"), opts.nonnegative_integer("--fft2-cross-mode"),
-                              opts.nonnegative_integer("--fft2-io-mode")};
-    if (options.index_mode > 1) throw std::runtime_error("--fft2-index-mode must be 0 or 1");
-    if (options.smem_padding > 2) throw std::runtime_error("--fft2-smem-padding must be 0, 1 or 2");
-    if (options.tile_policy > 1) throw std::runtime_error("--fft2-tile-policy must be 0 or 1");
-    if (options.radix_mode > 2) throw std::runtime_error("--fft2-radix-mode must be -1, 0, 1 or 2");
-    if (options.twiddle_mode > 1) throw std::runtime_error("--fft2-twiddle-mode must be 0 or 1");
-    if (options.cross_mode > 1) throw std::runtime_error("--fft2-cross-mode must be 0 or 1");
-    if (options.io_mode > 2 || (options.io_mode != 0 && options.radix_mode == 0))
-        throw std::runtime_error("--fft2-io-mode must be 0, 1 or 2; nonzero requires register radix");
-    return options;
-}
 std::string config_id(const std::string& impl, const Config& cfg) {
     return impl + "_N" + std::to_string(cfg.n) + "_b" + std::to_string(cfg.batch) + "_" + cfg.batch_mode;
 }
@@ -52,7 +33,7 @@ void status_rows(std::ostream& out, const std::string& impl, const Config& cfg, 
 int single(const Options& opts, const Config& cfg, const std::string& impl) {
     const auto root = result_root(opts.get("--tag"));
     const bool profile = opts.has("--profile"), exporting = opts.has("--export-vkfft");
-    auto fft = backend(impl, exporting, fft2_options(opts), opts.has("--fft2-out-of-place"));
+    auto fft = backend(impl, exporting, opts.has("--fft2-out-of-place"));
     const auto label = fft->name();
     const int trials = opts.integer("--trials", 15), iters = opts.integer("--iters", 20);
     const int warmup = opts.integer("--warmup", 3);
@@ -126,15 +107,14 @@ int single(const Options& opts, const Config& cfg, const std::string& impl) {
     fft->destroy();
     return status == "ok" ? 0 : 2;
 }
-// The legacy API calls exit() on CUDA errors. A fresh process per config also
-// releases a poisoned CUDA context after an OOM/launch fault, so the sweep can
-// always attempt subsequent configs without changing the legacy API or code.
+// A fresh process per config releases a poisoned CUDA context after an
+// OOM/launch fault, so the sweep can always attempt subsequent configs.
 int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vector<std::string>& impls) {
     const auto root = result_root(opts.get("--tag"));
     auto out = new_output(root / "sweep/raw.csv"); out << header; out.flush();
     bool failed = false;
     for (const auto& cfg : cfgs) for (const auto& impl : impls) {
-        const auto label = backend(impl, false, fft2_options(opts), opts.has("--fft2-out-of-place"))->name();
+        const auto label = backend(impl, false, opts.has("--fft2-out-of-place"))->name();
         const std::string id = config_id(label, cfg);
         const auto row_path = root / "sweep/rows" / (id + ".csv");
         const auto log_path = root / "sweep/config_logs" / (id + ".log");
@@ -147,10 +127,6 @@ int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vecto
             "--iters", opts.get("--iters", "20"), "--warmup", opts.get("--warmup", "3"),
             "--threshold", opts.get("--threshold", "1e-12")};
         if (opts.has("--verify-fftw")) args.push_back("--verify-fftw");
-        for (const auto* key : {"--fft2-n1", "--fft2-tile-cols", "--fft2-tile-rows",
-                                "--fft2-index-mode", "--fft2-smem-padding", "--fft2-tile-policy", "--fft2-twiddle-mode", "--fft2-cross-mode", "--fft2-io-mode", "--fft2-radix-mode"}) {
-            if (opts.has(key)) { args.push_back(key); args.push_back(opts.get(key)); }
-        }
         if (opts.has("--fft2-out-of-place")) args.push_back("--fft2-out-of-place");
         std::vector<char*> argv;
         for (auto& arg : args) argv.push_back(arg.data());
@@ -185,16 +161,11 @@ int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vecto
 int main(int argc, char** argv) {
     try {
         Options opts(argc, argv, {"--worker", "--profile", "--export-vkfft", "--versions", "--verify-fftw", "--fft2-out-of-place", "--help"},
-                     {"--tag", "--n", "--log2", "--batch", "--batch-modes", "--impl", "--impls", "--trials", "--iters", "--warmup", "--threshold",
-                      "--fft2-n1", "--fft2-tile-cols", "--fft2-tile-rows", "--fft2-index-mode", "--fft2-smem-padding", "--fft2-tile-policy", "--fft2-twiddle-mode", "--fft2-cross-mode", "--fft2-io-mode", "--fft2-radix-mode"});
+                     {"--tag", "--n", "--log2", "--batch", "--batch-modes", "--impl", "--impls", "--trials", "--iters", "--warmup", "--threshold"});
         if (opts.has("--help")) {
-            std::cout << "fft_bench --tag TAG [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft,fft2]\n"
+            std::cout << "fft_bench --tag TAG [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls cufft,vkfft,fft2]\n"
                          "  [--trials 15] [--iters 20] [--warmup 3] [--threshold 1e-12] [--verify-fftw]\n"
-                         "  [--impl fft2] [--fft2-n1 0] [--fft2-tile-cols 0] [--fft2-tile-rows 0] [--fft2-out-of-place]\n"
-                         "  [--fft2-index-mode 0|1] [--fft2-smem-padding 0|1|2] (default: 0)\n"
-                         "  [--fft2-tile-policy 0|1] [--fft2-radix-mode -1|0|1|2] (default: 0; -1 = auto radix)\n"
-                         "  [--fft2-io-mode 0|1|2] (default: 0; nonzero requires register radix)\n"
-                         "  [--fft2-twiddle-mode 0|1] [--fft2-cross-mode 0|1] (default: 0)\n"
+                         "  [--impl fft2] [--fft2-out-of-place]\n"
                          "  --profile | --export-vkfft: requires exactly one --n, --batch and --impls config\n";
             return 0;
         }
@@ -204,9 +175,9 @@ int main(int argc, char** argv) {
         }
         const auto cfgs = configs(opts);
         if (opts.has("--impl") && opts.has("--impls")) throw std::runtime_error("choose --impl or --impls");
-        const auto impls = split(opts.get("--impl", opts.get("--impls", "legacy,cufft,vkfft,fft2")));
+        const auto impls = split(opts.get("--impl", opts.get("--impls", "cufft,vkfft,fft2")));
         for (const auto& impl : impls) {
-            auto checked = backend(impl, false, fft2_options(opts), opts.has("--fft2-out-of-place"));
+            auto checked = backend(impl, false, opts.has("--fft2-out-of-place"));
             (void)checked;
         }
         if (opts.has("--profile") && opts.has("--export-vkfft")) throw std::runtime_error("choose profile or export");

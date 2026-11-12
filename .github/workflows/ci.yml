@@ -1,7 +1,7 @@
 # CI (CPU runners only; no GPU or CUDA executable is run).
 # python: Run analysis tests and the NumPy FFT reference tests on Python 3.12.
 # shell: Check all scripts with bash/shellcheck and dry-run the T1 pipeline.
-# cuda-compile: Build fft2 for sm_80/sm_89, measurement tools, and legacy on CUDA 13.
+# cuda-compile: Build fft2 for sm_80/sm_89, and measurement tools on CUDA 13.
 # notebooks: Validate notebook JSON/schema and warn about outputs over 1 MB.
 name: CI
 
@@ -125,8 +125,6 @@ jobs:
           else
             echo "::notice::bench/ is absent; skipping VkFFT and measurement tool builds."
           fi
-      - name: Build legacy (sm_80)
-        run: make -B CUDA_ARCH=sm_80
 
   notebooks:
     runs-on: ubuntu-24.04

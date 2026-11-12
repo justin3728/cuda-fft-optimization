@@ -33,16 +33,7 @@ capture() {
     shift 7
     local base="$out/ncu/$id" status=ok code=0 impl_detail=''
     local captured=NA expected=NA sampled=auto capture_limit=$ncu_library_max_kernels kernels_per_batch=NA
-    if [[ $impl == legacy ]]; then
-        kernels_per_batch=5
-        ((n > 1024)) || kernels_per_batch=1
-        expected=$((batch * kernels_per_batch))
-        capture_limit=$((ncu_max_kernels / kernels_per_batch * kernels_per_batch))
-        ((capture_limit >= kernels_per_batch)) || { echo "--ncu-max-kernels must fit a complete legacy batch ($kernels_per_batch kernels)" >&2; exit 2; }
-        ((capture_limit <= expected)) || capture_limit=$expected
-        sampled=false
-        ((capture_limit == expected)) || sampled=true
-    elif [[ $impl == fft2* ]]; then
+    if [[ $impl == fft2* ]]; then
         expected=2; capture_limit=2; sampled=false
     elif [[ $impl == bwcopy ]]; then
         expected=1; capture_limit=1; sampled=false
@@ -81,11 +72,6 @@ capture() {
         elif [[ ! $captured =~ ^[1-9][0-9]*$ ]]; then
             status=error; failed=1; captured=NA
             echo "Invalid captured-kernel count for $base.csv" >&2
-        elif [[ $impl == legacy ]]; then
-            if ((captured != capture_limit || captured % kernels_per_batch != 0)); then
-                status=error; failed=1
-                echo "Legacy capture was not the requested complete-batch prefix: captured=$captured limit=$capture_limit kernels_per_batch=$kernels_per_batch" >&2
-            fi
         elif [[ $impl == fft2* ]]; then
             if ! "$PYTHON" scripts/analysis/ncu_summary.py --check-fft2-capture "$base.csv"; then
                 status=error; failed=1
@@ -119,8 +105,7 @@ while read -r exponent; do
             label=$impl
             [[ $impl != fft2 ]] || label=$(t1_fft2_name)
             id="${label}_N${n}_b${batch}_${mode}"
-            if { [[ $impl == legacy ]] && ((n > 1048576)); } ||
-               { [[ $impl == fft2 ]] && ((exponent < 16 || exponent > 24)); }; then
+            if [[ $impl == fft2 ]] && ((exponent < 16 || exponent > 24)); then
                 echo "unsupported: $impl N=$n outside its supported range"
                 if ((dry_run == 0)); then t1_csv_row "$label" "$n" "$batch" "$mode" all "${id}_cache_all.csv" unsupported 0 0 false 0 NA '' >> "$out/ncu/index.csv"; fi
                 continue

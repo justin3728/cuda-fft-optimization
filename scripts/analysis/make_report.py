@@ -15,7 +15,7 @@ from urllib.parse import quote
 from io_utils import number
 
 ROOT = Path(__file__).resolve().parents[2]
-IMPLEMENTATIONS = ("legacy", "cufft", "vkfft", "fft2")
+IMPLEMENTATIONS = ("cufft", "vkfft", "fft2")
 ABSENT = {"", "na", "n/a", "null", "nan", "not supported"}
 
 
@@ -249,11 +249,11 @@ def config_sort(identity):
 
 
 def impl_family(label):
-    return str(label).split("[", 1)[0]
+    return str(label).removesuffix("_oop")
 
 
 def impl_sort(label):
-    return (impl_family(label), label != "fft2[n1=0,c=0,r=0]", label)
+    return (impl_family(label), label != "fft2", label)
 
 
 def series_sort(identity):

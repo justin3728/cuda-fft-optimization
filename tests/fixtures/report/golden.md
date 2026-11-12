@@ -58,30 +58,24 @@ Gap = implementation time − calibrated DRAM passes × pass floor; gap (%) = 10
 
 | N | Batch | Batch label | Impl | Timing | Median (µs) | Speedup vs cuFFT (×) | Passes-equivalent | Correctness status | Calibrated DRAM passes | Gap (µs) | Gap (%) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 65536 | 1 | b1 | legacy | hot | 63.1296 | 0.727494 | 18.403 | ok | n/a[^missing-11] | n/a[^missing-11] | n/a[^missing-11] |
-| 65536 | 1 | b1 | legacy | cold | 73.728 | 0.736111 | 4 | ok | n/a[^missing-12] | n/a[^missing-12] | n/a[^missing-12] |
-| 65536 | 1 | b1 | cufft | hot | 45.9264 | 1 | 13.3881 | ok | n/a[^missing-13] | n/a[^missing-13] | n/a[^missing-13] |
-| 65536 | 1 | b1 | cufft | cold | 54.272 | 1 | 2.94444 | ok | n/a[^missing-14] | n/a[^missing-14] | n/a[^missing-14] |
-| 65536 | 1 | b1 | vkfft | hot | 66.56 | 0.69 | 19.403 | ok | n/a[^missing-15] | n/a[^missing-15] | n/a[^missing-15] |
-| 65536 | 1 | b1 | vkfft | cold | 74.752 | 0.726027 | 4.05556 | ok | n/a[^missing-16] | n/a[^missing-16] | n/a[^missing-16] |
-| 65536 | 1 | b1 | fft2 | hot | n/a[^missing-17] | n/a[^missing-18] | n/a[^missing-18] | n/a[^missing-19] | n/a[^missing-20] | n/a[^missing-18][^missing-20] | n/a[^missing-18][^missing-20] |
-| 65536 | 1 | b1 | fft2 | cold | n/a[^missing-21] | n/a[^missing-22] | n/a[^missing-22] | n/a[^missing-23] | n/a[^missing-24] | n/a[^missing-22][^missing-24] | n/a[^missing-22][^missing-24] |
-| 1048576 | 1 | b1 | legacy | hot | 604.365 | 1.16181 | 21.6587 | ok | 0.579634 | 588.191 | 97.3238 |
-| 1048576 | 1 | b1 | legacy | cold | 738.304 | 1.06103 | 4.47826 | ok | 2.43259 | 337.257 | 45.68 |
+| 65536 | 1 | b1 | cufft | hot | 45.9264 | 1 | 13.3881 | ok | n/a[^missing-11] | n/a[^missing-11] | n/a[^missing-11] |
+| 65536 | 1 | b1 | cufft | cold | 54.272 | 1 | 2.94444 | ok | n/a[^missing-12] | n/a[^missing-12] | n/a[^missing-12] |
+| 65536 | 1 | b1 | vkfft | hot | 66.56 | 0.69 | 19.403 | ok | n/a[^missing-13] | n/a[^missing-13] | n/a[^missing-13] |
+| 65536 | 1 | b1 | vkfft | cold | 74.752 | 0.726027 | 4.05556 | ok | n/a[^missing-14] | n/a[^missing-14] | n/a[^missing-14] |
+| 65536 | 1 | b1 | fft2 | hot | n/a[^missing-15] | n/a[^missing-16] | n/a[^missing-16] | n/a[^missing-17] | n/a[^missing-18] | n/a[^missing-16][^missing-18] | n/a[^missing-16][^missing-18] |
+| 65536 | 1 | b1 | fft2 | cold | n/a[^missing-19] | n/a[^missing-20] | n/a[^missing-20] | n/a[^missing-21] | n/a[^missing-22] | n/a[^missing-20][^missing-22] | n/a[^missing-20][^missing-22] |
 | 1048576 | 1 | b1 | cufft | hot | 702.157 | 1 | 25.1633 | ok | 0.300485 | 693.772 | 98.8059 |
 | 1048576 | 1 | b1 | cufft | cold | 783.36 | 1 | 4.75155 | ok | 1.06255 | 608.184 | 77.6378 |
 | 1048576 | 1 | b1 | vkfft | hot | 561.766 | 1.24991 | 20.1321 | ok | 1.26527 | 526.46 | 93.7151 |
 | 1048576 | 1 | b1 | vkfft | cold | 668.768 | 1.17135 | 4.05648 | ok | 1.58065 | 408.176 | 61.0341 |
-| 1048576 | 1 | b1 | fft2 | hot | n/a[^missing-25] | n/a[^missing-26] | n/a[^missing-26] | n/a[^missing-27] | n/a[^missing-28] | n/a[^missing-26][^missing-28] | n/a[^missing-26][^missing-28] |
-| 1048576 | 1 | b1 | fft2 | cold | n/a[^missing-29] | n/a[^missing-30] | n/a[^missing-30] | n/a[^missing-31] | n/a[^missing-32] | n/a[^missing-30][^missing-32] | n/a[^missing-30][^missing-32] |
-| 16777216 | 1 | b1 | legacy | hot | n/a[^missing-33] | n/a[^missing-34] | n/a[^missing-34] | unsupported | n/a[^missing-35] | n/a[^missing-34][^missing-35] | n/a[^missing-34][^missing-35] |
-| 16777216 | 1 | b1 | legacy | cold | n/a[^missing-36] | n/a[^missing-37] | n/a[^missing-37] | unsupported | n/a[^missing-38] | n/a[^missing-37][^missing-38] | n/a[^missing-37][^missing-38] |
-| 16777216 | 1 | b1 | cufft | hot | 8901.43 | 1 | 4.00802 | ok | n/a[^missing-39] | n/a[^missing-39] | n/a[^missing-39] |
-| 16777216 | 1 | b1 | cufft | cold | 8815.62 | 1 | 3.96728 | ok | n/a[^missing-40] | n/a[^missing-40] | n/a[^missing-40] |
-| 16777216 | 1 | b1 | vkfft | hot | 9665.39 | 0.920959 | 4.35201 | ok | n/a[^missing-41] | n/a[^missing-41] | n/a[^missing-41] |
-| 16777216 | 1 | b1 | vkfft | cold | 9612.26 | 0.917122 | 4.32579 | ok | n/a[^missing-42] | n/a[^missing-42] | n/a[^missing-42] |
-| 16777216 | 1 | b1 | fft2 | hot | n/a[^missing-43] | n/a[^missing-44] | n/a[^missing-44] | n/a[^missing-45] | n/a[^missing-46] | n/a[^missing-44][^missing-46] | n/a[^missing-44][^missing-46] |
-| 16777216 | 1 | b1 | fft2 | cold | n/a[^missing-47] | n/a[^missing-48] | n/a[^missing-48] | n/a[^missing-49] | n/a[^missing-50] | n/a[^missing-48][^missing-50] | n/a[^missing-48][^missing-50] |
+| 1048576 | 1 | b1 | fft2 | hot | n/a[^missing-23] | n/a[^missing-24] | n/a[^missing-24] | n/a[^missing-25] | n/a[^missing-26] | n/a[^missing-24][^missing-26] | n/a[^missing-24][^missing-26] |
+| 1048576 | 1 | b1 | fft2 | cold | n/a[^missing-27] | n/a[^missing-28] | n/a[^missing-28] | n/a[^missing-29] | n/a[^missing-30] | n/a[^missing-28][^missing-30] | n/a[^missing-28][^missing-30] |
+| 16777216 | 1 | b1 | cufft | hot | 8901.43 | 1 | 4.00802 | ok | n/a[^missing-31] | n/a[^missing-31] | n/a[^missing-31] |
+| 16777216 | 1 | b1 | cufft | cold | 8815.62 | 1 | 3.96728 | ok | n/a[^missing-32] | n/a[^missing-32] | n/a[^missing-32] |
+| 16777216 | 1 | b1 | vkfft | hot | 9665.39 | 0.920959 | 4.35201 | ok | n/a[^missing-33] | n/a[^missing-33] | n/a[^missing-33] |
+| 16777216 | 1 | b1 | vkfft | cold | 9612.26 | 0.917122 | 4.32579 | ok | n/a[^missing-34] | n/a[^missing-34] | n/a[^missing-34] |
+| 16777216 | 1 | b1 | fft2 | hot | n/a[^missing-35] | n/a[^missing-36] | n/a[^missing-36] | n/a[^missing-37] | n/a[^missing-38] | n/a[^missing-36][^missing-38] | n/a[^missing-36][^missing-38] |
+| 16777216 | 1 | b1 | fft2 | cold | n/a[^missing-39] | n/a[^missing-40] | n/a[^missing-40] | n/a[^missing-41] | n/a[^missing-42] | n/a[^missing-40][^missing-42] | n/a[^missing-40][^missing-42] |
 
 ## Per-kernel profiles
 
@@ -116,38 +110,6 @@ working_set_fits_l2: True (two-buffer proxy: 32 × N × batch ≤ L2 size).
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2376:1:13:0 | regular_fft_factor&lt;1024, EPT&lt;8&gt;, 8, 0, 6, 0, 2, 1, unsigned int, double, HostConfigPlaceholder&gt; | 383.264 | 5888 | 116608 | 0.000304765 | 0.00603568 | 3.4325e+07 | 0.12937 | 6.02317 | 65.74 | 0 | 131072 | tex_throttle | 87.33 | short_scoreboard | 3.04 |
 | 2376:1:13:1 | regular_fft_factor&lt;1024, EPT&lt;8&gt;, 8, 0, 6, 0, 2, 1, unsigned int, double, HostConfigPlaceholder&gt; | 312.832 | 1.00584e+07 | 1.42976e+06 | 0.520627 | 0.074005 | 3.43288e+07 | 14.23 | 7.38006 | 63.7 | 0 | 131072 | tex_throttle | 84.47 | lg_throttle | 3.78 |
-
-### impl=legacy, N=1048576, batch=1, batch_mode=b1, cache_control=all
-
-Source: `results/smoke_l4_20261111/ncu/legacy_N1048576_b1_b1_cache_all.md line 5`.
-
-working_set_fits_l2: True (two-buffer proxy: 32 × N × batch ≤ L2 size).
-
-> **L2-resident:** DRAM bytes undercount traffic (writes deferred in L2); judge this config by L2 metrics.
-
-| Kernel ID | Kernel | Time (µs) | DRAM read (B) | DRAM write (B) | DRAM R/ideal (cal.) | DRAM W/ideal (cal.) | L2 bytes | pct_mixed_hbm_limit | pct_l2_limit | Achieved occupancy (%) | Bank conflicts ld | Bank conflicts st | Stall 1 | Stall 1 (%) | Stall 2 | Stall 2 (%) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1577:1:13:0 | transpose_opt | 68.928 | 1.92402e+07 | 12544 | 0.995881 | 0.000649283 | 3.88412e+07 | 107.512 | 37.8974 | 77.26 | 9144 | 2986 | mio_throttle | 32.13 | mio_throttle_pipe_mio | 32.13 |
-| 1577:1:13:1 | fft_block_1024_specialized | 202.656 | 1.85079e+07 | 52096 | 0.957976 | 0.00269651 | 4.07198e+07 | 35.2556 | 13.5132 | 47.31 | 524288 | 1.44179e+06 | tex_throttle | 59.02 | barrier | 13.46 |
-| 1577:1:13:2 | transpose_and_twiddle | 180.768 | 1.86095e+07 | 896 | 0.963235 | 4.63773e-05 | 5.02919e+07 | 39.6259 | 18.7107 | 75.04 | 1429 | 1467 | tex_throttle | 44.84 | short_scoreboard | 33.05 |
-| 1577:1:13:3 | fft_block_1024_specialized | 201.76 | 1.8528e+07 | 13184 | 0.959017 | 0.000682409 | 4.08557e+07 | 35.3723 | 13.6185 | 47.31 | 524288 | 1.44179e+06 | tex_throttle | 58.9 | barrier | 13.61 |
-| 1577:1:13:4 | transpose_square_inplace | 69.12 | 1.90212e+07 | 8832 | 0.984545 | 0.000457148 | 4.11784e+07 | 105.972 | 40.0662 | 31.79 | 11191 | 4144 | long_scoreboard | 60.59 | long_scoreboard_pipe_l1tex | 60.59 |
-
-### impl=legacy, N=1048576, batch=1, batch_mode=b1, cache_control=none
-
-Source: `results/smoke_l4_20261111/ncu/legacy_N1048576_b1_b1_cache_none.md line 5`.
-
-working_set_fits_l2: True (two-buffer proxy: 32 × N × batch ≤ L2 size).
-
-> **L2-resident:** DRAM bytes undercount traffic (writes deferred in L2); judge this config by L2 metrics.
-
-| Kernel ID | Kernel | Time (µs) | DRAM read (B) | DRAM write (B) | DRAM R/ideal (cal.) | DRAM W/ideal (cal.) | L2 bytes | pct_mixed_hbm_limit | pct_l2_limit | Achieved occupancy (%) | Bank conflicts ld | Bank conflicts st | Stall 1 | Stall 1 (%) | Stall 2 | Stall 2 (%) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1894:1:13:0 | transpose_opt | 41.12 | 1.01972e+07 | 813440 | 0.527811 | 0.042104 | 3.99072e+07 | 103.476 | 65.2695 | 42.41 | 11228 | 16038 | mio_throttle | 29.3 | mio_throttle_pipe_mio | 29.3 |
-| 1894:1:13:1 | fft_block_1024_specialized | 192.224 | 128 | 330752 | 6.62533e-06 | 0.0171199 | 4.09221e+07 | 0.698456 | 14.3174 | 47.25 | 524288 | 1.44179e+06 | tex_throttle | 62.78 | barrier | 13.62 |
-| 1894:1:13:2 | transpose_and_twiddle | 176.896 | 9.77651e+06 | 1.11027e+06 | 0.506036 | 0.057468 | 5.05006e+07 | 23.8189 | 19.1995 | 73.54 | 1244 | 3284 | tex_throttle | 52.67 | short_scoreboard | 34.55 |
-| 1894:1:13:3 | fft_block_1024_specialized | 192.736 | 512 | 89856 | 2.65013e-05 | 0.00465098 | 4.08351e+07 | 0.1902 | 14.249 | 47.17 | 524288 | 1.44179e+06 | tex_throttle | 62.79 | barrier | 13.5 |
-| 1894:1:13:4 | transpose_square_inplace | 26.688 | 384 | 77696 | 1.9876e-05 | 0.00402158 | 4.0528e+07 | 1.18686 | 102.13 | 30.56 | 10501 | 29634 | long_scoreboard | 26.95 | long_scoreboard_pipe_l1tex | 26.95 |
 
 ### impl=vkfft, N=1048576, batch=1, batch_mode=b1, cache_control=all
 
@@ -187,43 +149,35 @@ working_set_fits_l2: True (two-buffer proxy: 32 × N × batch ≤ L2 size).
 [^missing-8]: results/smoke_l4_20261111/env.txt: missing Clocks/Memory.
 [^missing-9]: results/smoke_l4_20261111/ncu/index.csv:cache_control and results/smoke_l4_20261111/ncu/commands.txt:--cache-control missing.
 [^missing-10]: results/smoke_l4_20261111/ncu/index.csv:clock_control and results/smoke_l4_20261111/ncu/commands.txt:--clock-control missing.
-[^missing-11]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('legacy', '65536', '1', 'b1', 'none', '').
-[^missing-12]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('legacy', '65536', '1', 'b1', 'all', '').
-[^missing-13]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '65536', '1', 'b1', 'none', '').
-[^missing-14]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '65536', '1', 'b1', 'all', '').
-[^missing-15]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '65536', '1', 'b1', 'none', '').
-[^missing-16]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '65536', '1', 'b1', 'all', '').
-[^missing-17]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, hot, ): missing time_ms_median.
-[^missing-18]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, hot, ): status=missing; derived metrics require ok.
-[^missing-19]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, hot, ): missing status.
-[^missing-20]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '65536', '1', 'b1', 'none', '').
-[^missing-21]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, cold, ): missing time_ms_median.
-[^missing-22]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, cold, ): status=missing; derived metrics require ok.
-[^missing-23]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, cold, ): missing status.
-[^missing-24]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '65536', '1', 'b1', 'all', '').
-[^missing-25]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, hot, ): missing time_ms_median.
-[^missing-26]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, hot, ): status=missing; derived metrics require ok.
-[^missing-27]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, hot, ): missing status.
-[^missing-28]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '1048576', '1', 'b1', 'none', '').
-[^missing-29]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, cold, ): missing time_ms_median.
-[^missing-30]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, cold, ): status=missing; derived metrics require ok.
-[^missing-31]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, cold, ): missing status.
-[^missing-32]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '1048576', '1', 'b1', 'all', '').
-[^missing-33]: results/smoke_l4_20261111/sweep/raw.csv row 14: missing time_ms_median.
-[^missing-34]: results/smoke_l4_20261111/sweep/raw.csv row 14: status=unsupported; derived metrics require ok.
-[^missing-35]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('legacy', '16777216', '1', 'b1', 'none', '').
-[^missing-36]: results/smoke_l4_20261111/sweep/raw.csv row 15: missing time_ms_median.
-[^missing-37]: results/smoke_l4_20261111/sweep/raw.csv row 15: status=unsupported; derived metrics require ok.
-[^missing-38]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('legacy', '16777216', '1', 'b1', 'all', '').
-[^missing-39]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '16777216', '1', 'b1', 'none', '').
-[^missing-40]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '16777216', '1', 'b1', 'all', '').
-[^missing-41]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '16777216', '1', 'b1', 'none', '').
-[^missing-42]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '16777216', '1', 'b1', 'all', '').
-[^missing-43]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, hot, ): missing time_ms_median.
-[^missing-44]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, hot, ): status=missing; derived metrics require ok.
-[^missing-45]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, hot, ): missing status.
-[^missing-46]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '16777216', '1', 'b1', 'none', '').
-[^missing-47]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, cold, ): missing time_ms_median.
-[^missing-48]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, cold, ): status=missing; derived metrics require ok.
-[^missing-49]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, cold, ): missing status.
-[^missing-50]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '16777216', '1', 'b1', 'all', '').
+[^missing-11]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '65536', '1', 'b1', 'none', '').
+[^missing-12]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '65536', '1', 'b1', 'all', '').
+[^missing-13]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '65536', '1', 'b1', 'none', '').
+[^missing-14]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '65536', '1', 'b1', 'all', '').
+[^missing-15]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, hot, ): missing time_ms_median.
+[^missing-16]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, hot, ): status=missing; derived metrics require ok.
+[^missing-17]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, hot, ): missing status.
+[^missing-18]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '65536', '1', 'b1', 'none', '').
+[^missing-19]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, cold, ): missing time_ms_median.
+[^missing-20]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, cold, ): status=missing; derived metrics require ok.
+[^missing-21]: results/smoke_l4_20261111/sweep/raw.csv (65536, 1, b1, fft2, cold, ): missing status.
+[^missing-22]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '65536', '1', 'b1', 'all', '').
+[^missing-23]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, hot, ): missing time_ms_median.
+[^missing-24]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, hot, ): status=missing; derived metrics require ok.
+[^missing-25]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, hot, ): missing status.
+[^missing-26]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '1048576', '1', 'b1', 'none', '').
+[^missing-27]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, cold, ): missing time_ms_median.
+[^missing-28]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, cold, ): status=missing; derived metrics require ok.
+[^missing-29]: results/smoke_l4_20261111/sweep/raw.csv (1048576, 1, b1, fft2, cold, ): missing status.
+[^missing-30]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '1048576', '1', 'b1', 'all', '').
+[^missing-31]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '16777216', '1', 'b1', 'none', '').
+[^missing-32]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('cufft', '16777216', '1', 'b1', 'all', '').
+[^missing-33]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '16777216', '1', 'b1', 'none', '').
+[^missing-34]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('vkfft', '16777216', '1', 'b1', 'all', '').
+[^missing-35]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, hot, ): missing time_ms_median.
+[^missing-36]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, hot, ): status=missing; derived metrics require ok.
+[^missing-37]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, hot, ): missing status.
+[^missing-38]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '16777216', '1', 'b1', 'none', '').
+[^missing-39]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, cold, ): missing time_ms_median.
+[^missing-40]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, cold, ): status=missing; derived metrics require ok.
+[^missing-41]: results/smoke_l4_20261111/sweep/raw.csv (16777216, 1, b1, fft2, cold, ): missing status.
+[^missing-42]: results/smoke_l4_20261111/ncu/config_totals.csv: missing calibrated_memory_passes for ('fft2', '16777216', '1', 'b1', 'all', '').

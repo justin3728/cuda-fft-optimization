@@ -1,0 +1,6 @@
+impl,N,batch,batch_mode,cache_control,kernel_id,kernel,duration_us,dram_read_bytes,dram_write_bytes,lts_bytes
+cufft,1048576,1,b1,all,1:1:1:0,fft_k,50.0,16000000.0,2000000.0,60000000.0
+cufft,1048576,1,b1,all,1:1:1:1,fft_k,50.0,16000000.0,2000000.0,60000000.0
+"fft2[n1=0,c=0,r=0]",1048576,1,b1,all,2:1:1:0,a::pass1_columns<x>,100.0,10000000.0,4000000.0,100000000.0
+"fft2[n1=0,c=0,r=0]",1048576,1,b1,all,2:1:1:1,a::pass2_rows<x>,100.0,10000000.0,4000000.0,100000000.0
+cufft,1048576,1,b1,none,1:1:1:0,fft_k,99.0,1,1,1

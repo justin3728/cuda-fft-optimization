@@ -7,16 +7,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <memory>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -103,149 +100,24 @@ Error compare(const cuDoubleComplex* actual, const std::vector<cuDoubleComplex>&
     return {relative, static_cast<double>(std::sqrt(maximum_squared))};
 }
 
-enum class Outcome { passed, failed, skipped };
-
-struct Counts {
+struct Summary {
     int passed = 0;
     int failed = 0;
     int skipped = 0;
-
-    void add(Outcome result) {
-        if (result == Outcome::passed) { ++passed; }
-        else if (result == Outcome::failed) { ++failed; }
-        else { ++skipped; }
-    }
 };
 
-struct Summary {
-    Counts total;
-    Counts axes[4][2][3][2][2][2][3];
-
-    void add(Outcome result, fft2::PlanOptions options) {
-        total.add(result);
-        axes[options.radix_mode + 1][options.index_mode][options.smem_padding][options.tile_policy]
-            [options.twiddle_mode][options.cross_mode][options.io_mode].add(result);
-    }
-};
-
-std::vector<fft2::PlanOptions> variants_for(fft2::PlanOptions options, bool variants, bool twiddles = true) {
-    std::vector<fft2::PlanOptions> result;
-    if (!variants) { return {options}; }
-    const auto default_options = options;
-    options.radix_mode = 0;  // Preserve the existing explicit v1 matrix.
-    for (int mode = 0; mode <= (variants ? 1 : 0); ++mode) {
-        for (int padding = 0; padding <= (variants ? 2 : 0); ++padding) {
-            for (int policy = 0; policy <= (variants ? 1 : 0); ++policy) {
-                options.index_mode = mode;
-                options.smem_padding = padding;
-                options.tile_policy = policy;
-                result.push_back(options);
-            }
-        }
-    }
-    // Bound the L4 gate: test new radices against both tile policies with
-    // baseline indexing/padding, retaining all existing v1 axis combinations.
-    if (variants) {
-        options.index_mode = 0;
-        options.smem_padding = 0;
-        for (int radix : {1, 2}) {
-            for (int policy : {0, 1}) {
-                options.radix_mode = radix;
-                options.tile_policy = policy;
-                result.push_back(options);
-            }
-        }
-        // Add only the three nondefault twiddle pairs on radix 0/16 and both
-        // tile policies. Do not cross these axes with index/padding/radix-8.
-        if (twiddles) {
-            for (int radix : {0, 2}) {
-                for (int policy : {0, 1}) {
-                    for (int tw = 0; tw <= 1; ++tw) {
-                        for (int cx = 0; cx <= 1; ++cx) {
-                            if (tw == 0 && cx == 0) { continue; }
-                            options.radix_mode = radix;
-                            options.tile_policy = policy;
-                            options.twiddle_mode = tw;
-                            options.cross_mode = cx;
-                            result.push_back(options);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    result.push_back(default_options);  // Default plan at every size, also with --variants.
-    for (int io : {1, 2}) {
-        if ((options.tile_cols != 0 && (options.tile_cols & (options.tile_cols - 1)) != 0)
-            || (options.tile_rows != 0 && (options.tile_rows & (options.tile_rows - 1)) != 0)) { continue; }
-        auto io_options = default_options;
-        io_options.io_mode = io;
-        result.push_back(io_options);
-    }
-    return result;
-}
-
-std::string config_label(size_t n, int batch, fft2::PlanOptions options) {
-    std::ostringstream label;
-    label << "N=" << n << " batch=" << batch << " requested_N1=" << options.n1
-          << " requested_C=" << options.tile_cols << " requested_R=" << options.tile_rows
-          << " index_mode=" << options.index_mode << " smem_padding=" << options.smem_padding
-          << " tile_policy=" << options.tile_policy << " radix_mode=" << options.radix_mode
-          << " twiddle_mode=" << options.twiddle_mode << " cross_mode=" << options.cross_mode
-          << " io_mode=" << options.io_mode;
-    return label.str();
-}
-
-bool shared_fits(size_t n, fft2::PlanOptions options, size_t limit) {
-    int log_n = 0;
-    for (size_t value = n; value > 1; value >>= 1) { ++log_n; }
-    const size_t n1 = options.n1 == 0 ? size_t{1} << (log_n / 2) : static_cast<size_t>(options.n1);
-    const size_t n2 = n / n1;
-    // Both automatic policies can fall back to one lane; explicit widths override.
-    // Do not catch arbitrary plan/CUDA errors as skips.
-    const size_t minimum = 1;
-    const size_t cols = options.tile_cols == 0 ? minimum : static_cast<size_t>(options.tile_cols);
-    const size_t rows = options.tile_rows == 0 ? minimum : static_cast<size_t>(options.tile_rows);
-    const size_t extra = static_cast<size_t>(options.smem_padding + options.twiddle_mode);
-    return n1 * (cols + extra) * sizeof(cuDoubleComplex) <= limit
-        && n2 * (rows + extra) * sizeof(cuDoubleComplex) <= limit;
-}
-
-size_t plan_reserve(size_t n, fft2::PlanOptions options) {
-    return kPlanReserve + (options.cross_mode == 1 ? n * sizeof(cuDoubleComplex) : 0);
-}
-
-void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_limit,
-                bool variants, Summary& summary, fft2::PlanOptions base_options = {}) {
+void run_config(size_t n, int batch, size_t cap, size_t host_cap, Summary& summary) {
     const size_t count = n * static_cast<size_t>(batch);
     const size_t bytes = count * sizeof(cuDoubleComplex);
-    std::vector<fft2::PlanOptions> eligible;
-    // Keep the added L4 work bounded: selected batch-1 sizes and both existing
-    // asymmetric/partial-tile cases (batch 3). Retain the entire old matrix.
-    const bool sample_twiddles = base_options.n1 != 0 || (batch == 1 &&
-        (n == (size_t{1} << 16) || n == (size_t{1} << 19) || n == (size_t{1} << 20)
-         || n == (size_t{1} << 22) || n == (size_t{1} << 24)));
-    for (const auto options : variants_for(base_options, variants, sample_twiddles)) {
-        const size_t device_required = 3 * bytes + plan_reserve(n, options);
-        // Table generation and chunked comparison do not overlap on the host.
-        const size_t host_required = bytes + std::max({16 * kMiB,
-            options.cross_mode == 1 ? n * sizeof(cuDoubleComplex) : size_t{0},
-            options.io_mode == 1 && batch == 1 ? bytes + 16 * kMiB : size_t{0}});
-        if (!shared_fits(n, options, shared_limit)) {
-            std::cout << config_label(n, batch, options) << " SKIP shared_memory_budget"
-                      << " optin_limit=" << shared_limit << '\n';
-            summary.add(Outcome::skipped, options);
-        } else if (device_required > cap || host_required > host_cap) {
-            std::cout << config_label(n, batch, options) << " SKIP memory_cap"
-                      << " minimum_device_bytes=" << device_required << " device_cap=" << cap
-                      << " host_bytes=" << host_required << " host_cap=" << host_cap << '\n';
-            summary.add(Outcome::skipped, options);
-        } else {
-            eligible.push_back(options);
-        }
+    std::ostringstream label;
+    label << "N=" << n << " batch=" << batch;
+    // Input, output and the plan workspace, plus tables and margin; the host
+    // keeps one reference array and one bounded transfer tile.
+    if (3 * bytes + kPlanReserve > cap || bytes + 16 * kMiB > host_cap) {
+        std::cout << label.str() << " SKIP memory_cap device_cap=" << cap << " host_cap=" << host_cap << '\n';
+        ++summary.skipped;
+        return;
     }
-    if (eligible.empty()) { return; }
-
     try {
         Stream stream;
         // Query exact cuFFT work size with automatic allocation disabled, before
@@ -258,21 +130,11 @@ void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_
         check_cufft(cufftMakePlanMany(cufft.value, 1, dimensions, nullptr, 1, static_cast<int>(n),
                                      nullptr, 1, static_cast<int>(n), CUFFT_Z2Z, batch, &work_bytes),
                     "plan batched cuFFT reference");
-        std::vector<fft2::PlanOptions> fitting;
-        for (const auto options : eligible) {
-            const size_t required = 3 * bytes + plan_reserve(n, options) + work_bytes;
-            if (required > cap) {
-                std::cout << config_label(n, batch, options) << " SKIP memory_cap"
-                          << " required_device_bytes=" << required << " device_cap=" << cap
-                          << " cufft_work_bytes=" << work_bytes << '\n';
-                summary.add(Outcome::skipped, options);
-            } else {
-                fitting.push_back(options);
-            }
+        if (3 * bytes + kPlanReserve + work_bytes > cap) {
+            std::cout << label.str() << " SKIP memory_cap cufft_work_bytes=" << work_bytes << '\n';
+            ++summary.skipped;
+            return;
         }
-        eligible = std::move(fitting);
-        if (eligible.empty()) { return; }
-
         // Declared before 'cufft' so the work area outlives the cuFFT handle.
         if (work_bytes != 0) {
             check_cuda(cudaMalloc(&cufft_work.data, work_bytes), "allocate cuFFT work area");
@@ -281,9 +143,6 @@ void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_
         check_cufft(cufftSetStream(cufft.value, stream.value), "bind cuFFT nonblocking stream");
         DeviceBytes input(bytes);
         DeviceBytes output(bytes);
-        // Generate input and execute cuFFT once per (N, batch, split/tile case),
-        // then reuse both across all variants. Only one fft2 plan is live at a
-        // time, preserving the original device/host memory caps.
         std::vector<cuDoubleComplex> reference(count);
         std::mt19937_64 rng(static_cast<uint64_t>(n) + static_cast<uint64_t>(batch));
         std::uniform_real_distribution<double> random(-1.0, 1.0);
@@ -298,61 +157,26 @@ void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_
                    "read cuFFT reference");
         check_cuda(cudaStreamSynchronize(stream.value), "complete cuFFT reference");
 
-        for (const auto options : eligible) {
-            try {
-                auto plan = std::make_unique<fft2::Plan>(n, batch, options);
-                if (plan->n() != n || plan->batch() != batch || plan->workspace_bytes() != bytes
-                    || static_cast<size_t>(plan->n1()) * static_cast<size_t>(plan->n2()) != n) {
-                    throw std::runtime_error("Plan getters / workspace size disagree with requested configuration");
-                }
-                plan->execute(input.complex_data(), output.complex_data(), stream.value);
-                const Error out_of_place = compare(output.complex_data(), reference, stream.value);
-                // Preserve input for the next variant, testing aliasing in the
-                // output buffer with the same original samples.
-                check_cuda(cudaMemcpyAsync(output.data, input.data, bytes, cudaMemcpyDeviceToDevice, stream.value),
-                           "restore input for in-place FFT");
-                plan->execute(output.complex_data(), output.complex_data(), stream.value);
-                const Error in_place = compare(output.complex_data(), reference, stream.value);
-                const long double tolerance = options.io_mode == 2 ? kTolerance
-                    : variants || options.radix_mode != 0 ? 1e-14L : kTolerance;
-                const std::string description = plan->describe();
-                plan.reset();  // One workspace at a time, including the bit-identity baseline.
-                bool identical = true;
-                if (options.io_mode == 1 && batch == 1) {
-                    std::vector<cuDoubleComplex> bits(count);
-                    check_cuda(cudaMemcpyAsync(bits.data(), output.data, bytes, cudaMemcpyDeviceToHost, stream.value),
-                               "read io=1 bits");
-                    check_cuda(cudaStreamSynchronize(stream.value), "finish io=1 bit read");
-                    auto baseline_options = options;
-                    baseline_options.io_mode = 0;
-                    fft2::Plan baseline(n, batch, baseline_options);
-                    baseline.execute(input.complex_data(), output.complex_data(), stream.value);
-                    std::vector<cuDoubleComplex> chunk(std::min(count, kMiB));
-                    for (size_t first = 0; first < count; first += chunk.size()) {
-                        const size_t chunk_bytes = std::min(chunk.size(), count - first) * sizeof(cuDoubleComplex);
-                        check_cuda(cudaMemcpyAsync(chunk.data(), output.complex_data() + first, chunk_bytes,
-                                                   cudaMemcpyDeviceToHost, stream.value), "read io=0 bits");
-                        check_cuda(cudaStreamSynchronize(stream.value), "finish io=0 bit read");
-                        identical = identical && std::memcmp(chunk.data(), bits.data() + first, chunk_bytes) == 0;
-                    }
-                    std::cout << config_label(n, batch, options) << " bit_identical=" << identical << '\n';
-                }
-                const bool passed = identical && out_of_place.relative_l2 <= tolerance && in_place.relative_l2 <= tolerance;
-                std::cout << config_label(n, batch, options) << " " << description
-                          << " oop_rel_l2=" << out_of_place.relative_l2 << " oop_max_abs=" << out_of_place.max_absolute
-                          << " inplace_rel_l2=" << in_place.relative_l2 << " inplace_max_abs=" << in_place.max_absolute
-                          << (passed ? " PASS" : " FAIL") << '\n';
-                summary.add(passed ? Outcome::passed : Outcome::failed, options);
-            } catch (const std::exception& error) {
-                std::cout << config_label(n, batch, options) << " FAIL error=" << error.what() << '\n';
-                summary.add(Outcome::failed, options);
-            }
+        fft2::Plan plan(n, batch);
+        if (plan.n() != n || plan.batch() != batch || plan.workspace_bytes() != bytes
+            || static_cast<size_t>(plan.n1()) * static_cast<size_t>(plan.n2()) != n) {
+            throw std::runtime_error("Plan getters / workspace size disagree with requested configuration");
         }
+        plan.execute(input.complex_data(), output.complex_data(), stream.value);
+        const Error out_of_place = compare(output.complex_data(), reference, stream.value);
+        check_cuda(cudaMemcpyAsync(output.data, input.data, bytes, cudaMemcpyDeviceToDevice, stream.value),
+                   "restore input for in-place FFT");
+        plan.execute(output.complex_data(), output.complex_data(), stream.value);
+        const Error in_place = compare(output.complex_data(), reference, stream.value);
+        const bool passed = out_of_place.relative_l2 <= kTolerance && in_place.relative_l2 <= kTolerance;
+        std::cout << label.str() << " " << plan.describe()
+                  << " oop_rel_l2=" << out_of_place.relative_l2 << " oop_max_abs=" << out_of_place.max_absolute
+                  << " inplace_rel_l2=" << in_place.relative_l2 << " inplace_max_abs=" << in_place.max_absolute
+                  << (passed ? " PASS" : " FAIL") << '\n';
+        ++(passed ? summary.passed : summary.failed);
     } catch (const std::exception& error) {
-        for (const auto options : eligible) {
-            std::cout << config_label(n, batch, options) << " FAIL error=" << error.what() << '\n';
-            summary.add(Outcome::failed, options);
-        }
+        std::cout << label.str() << " FAIL error=" << error.what() << '\n';
+        ++summary.failed;
     }
 }
 
@@ -372,81 +196,7 @@ bool api_checks() {
         expect_error([] { fft2::Plan plan(size_t{1} << 15, 1); }, "N below range");
         expect_error([] { fft2::Plan plan(size_t{1} << 25, 1); }, "N above range");
         expect_error([] { fft2::Plan plan(size_t{1} << 16, 0); }, "zero batch");
-        expect_error([] { fft2::Plan plan(size_t{1} << 16, 1, {512, 0, 0}); }, "N2 below range");
-        expect_error([] { fft2::Plan plan(size_t{1} << 18, 1, {300, 0, 0}); }, "invalid N1");
-        expect_error([] { fft2::Plan plan(size_t{1} << 16, 1, {0, -1, 0}); }, "negative tile");
-        expect_error([] { fft2::Plan plan(size_t{1} << 24, 1, {0, 8, 0}); }, "tile above opt-in limit");
-        for (int mode : {-1, 2}) {
-            expect_error([mode] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, mode, 0}); },
-                         "invalid index mode");
-        }
-        for (int padding : {-1, 3}) {
-            expect_error([padding] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, padding}); },
-                         "invalid shared padding");
-        }
-        for (int policy : {-1, 2}) {
-            expect_error([policy] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, policy}); },
-                         "invalid tile policy");
-        }
-        for (int radix : {-2, 3}) {
-            expect_error([radix] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, 0, radix}); },
-                         "invalid radix mode");
-        }
-        for (int mode : {-1, 2}) {
-            expect_error([mode] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, 0, 0, mode}); },
-                         "invalid twiddle mode");
-            expect_error([mode] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, 0, 0, 0, mode}); },
-                         "invalid cross mode");
-        }
-        for (int cross : {0, 1}) {
-            fft2::PlanOptions options;
-            options.tile_policy = 0;
-            options.radix_mode = 0;
-            options.twiddle_mode = 1;
-            options.cross_mode = cross;
-            const fft2::Plan candidate(size_t{1} << 16, 1, options);
-            const std::string description = candidate.describe();
-            const size_t table_bytes = (cross == 1 ? size_t{1} << 16 : 512) * sizeof(cuDoubleComplex);
-            if (description.find("twiddle_mode=1 cross_mode=" + std::to_string(cross)) == std::string::npos
-                || description.find("cross_table_bytes=" + std::to_string(table_bytes)) == std::string::npos
-                || description.find("smem_bytes=36864") == std::string::npos) {
-                throw std::runtime_error("twiddle description / table or shared bytes disagree");
-            }
-        }
-        for (int mode : {-1, 3}) {
-            expect_error([mode] {
-                fft2::PlanOptions options;
-                options.io_mode = mode;
-                fft2::Plan candidate(size_t{1} << 16, 1, options);
-            }, "invalid io mode");
-        }
-        for (int mode : {1, 2}) {
-            expect_error([mode] {
-                fft2::PlanOptions options;
-                options.io_mode = mode;
-                options.radix_mode = 0;
-                fft2::Plan candidate(size_t{1} << 16, 1, options);
-            }, "register io with legacy radix");
-            for (int lanes : {3, 5, 6, 7}) {
-                for (bool columns : {false, true}) {
-                    expect_error([mode, lanes, columns] {
-                        fft2::PlanOptions options;
-                        options.io_mode = mode;
-                        options.tile_cols = columns ? lanes : 1;
-                        options.tile_rows = columns ? 1 : lanes;
-                        fft2::Plan candidate(size_t{1} << 16, 1, options);
-                    }, "register io with non-power-of-two lanes");
-                }
-            }
-        }
-        const fft2::Plan mixed(size_t{1} << 18, 1, {512, 8, 4});
-        if (mixed.describe().find("radix_mode=-1(p1=2,p2=1)") == std::string::npos) {
-            throw std::runtime_error("auto radix description must resolve each pass independently");
-        }
         fft2::Plan plan(size_t{1} << 16, 1);
-        if (plan.describe().find("smem_padding=0 tile_policy=1 radix_mode=-1(p1=") == std::string::npos) {
-            throw std::runtime_error("default plan options disagree");
-        }
         expect_error([&plan] { plan.execute(nullptr, nullptr, nullptr); }, "null input/output");
         std::cout << "API checks PASS\n";
         return true;
@@ -473,57 +223,29 @@ int main(int argc, char** argv) {
     Summary summary;
     try {
         bool describe = false;
-        bool variants = false;
         size_t cap = 6144 * kMiB;
         size_t host_cap = 2048 * kMiB;
         for (int index = 1; index < argc; ++index) {
             const std::string argument(argv[index]);
             if (argument == "--describe") {
                 describe = true;
-            } else if (argument == "--variants") {
-                variants = true;
             } else if ((argument == "--max-device-mib" || argument == "--max-host-mib") && index + 1 < argc) {
                 const size_t value = parse_mib(argv[++index]);
                 if (argument == "--max-device-mib") { cap = value; } else { host_cap = value; }
             } else if (argument == "--help") {
-                std::cout << "usage: fft2_test [--variants] [--describe] [--max-device-mib 6144] [--max-host-mib 2048]\n"
-                          << "--variants tests index_mode={0,1} x smem_padding={0,1,2} x tile_policy={0,1},"
-                          << " plus radix_mode={1,2} x tile_policy={0,1} at index_mode=smem_padding=0,"
-                          << " plus nonzero (twiddle_mode,cross_mode) pairs on radix_mode={0,2}"
-                          << " x tile_policy={0,1} at index_mode=smem_padding=0 on sampled sizes,"
-                          << " plus the default tile_policy=1, radix_mode=-1 plan at every size,"
-                          << " plus io_mode={1,2} on that plan (io=1 bit-identity vs io=0 at batch 1),"
-                          << " where shared memory fits.\n"
+                std::cout << "usage: fft2_test [--describe] [--max-device-mib 6144] [--max-host-mib 2048]\n"
+                          << "Compares fft2 (out-of-place and in-place) with cuFFT for N = 2^16..2^24,"
+                          << " batch 1, 3 and 8.\n"
                           << "--describe prints batch=1 plans for every N, without executing FFTs.\n";
                 return 0;
             } else {
                 throw std::runtime_error("unknown option or missing value: " + argument);
             }
         }
-        int device = 0;
-        int shared_limit = 0;
-        check_cuda(cudaGetDevice(&device), "get test device");
-        check_cuda(cudaDeviceGetAttribute(&shared_limit, cudaDevAttrMaxSharedMemoryPerBlockOptin, device),
-                   "query test opt-in shared-memory limit");
-        if (shared_limit <= 0) { throw std::runtime_error("device reports no opt-in shared memory"); }
         if (describe) {
-            int described = 0;
-            int skipped = 0;
             for (int exponent = 16; exponent <= 24; ++exponent) {
-                const size_t n = size_t{1} << exponent;
-                for (const auto options : variants_for({}, variants)) {
-                    if (!shared_fits(n, options, static_cast<size_t>(shared_limit))) {
-                        std::cout << config_label(n, 1, options) << " SKIP shared_memory_budget"
-                                  << " optin_limit=" << shared_limit << '\n';
-                        ++skipped;
-                        continue;
-                    }
-                    const fft2::Plan plan(n, 1, options);
-                    std::cout << plan.describe() << '\n';
-                    ++described;
-                }
+                std::cout << fft2::Plan(size_t{1} << exponent, 1).describe() << '\n';
             }
-            std::cout << "SUMMARY described=" << described << " skipped=" << skipped << " (no FFT execution)\n";
             return 0;
         }
         size_t free_bytes = 0;
@@ -531,41 +253,20 @@ int main(int argc, char** argv) {
         check_cuda(cudaMemGetInfo(&free_bytes, &total_bytes), "query available device memory");
         cap = std::min(cap, free_bytes - free_bytes / 10);  // Leave 10% of free VRAM outside the test budget.
         std::cout << "memory_device_cap=" << cap << " memory_host_cap=" << host_cap
-                  << " free_device_bytes=" << free_bytes << " total_device_bytes=" << total_bytes
-                  << " optin_shared_limit=" << shared_limit << '\n';
+                  << " free_device_bytes=" << free_bytes << " total_device_bytes=" << total_bytes << '\n';
         const bool api_ok = api_checks();
         for (int exponent = 16; exponent <= 24; ++exponent) {
             for (int batch : {1, 3, 8}) {
-                run_config(size_t{1} << exponent, batch, cap, host_cap, static_cast<size_t>(shared_limit),
-                           variants, summary);
+                run_config(size_t{1} << exponent, batch, cap, host_cap, summary);
             }
         }
-        // Exercise nondefault factors and partial tiles in the GPU gate too.
-        for (fft2::PlanOptions options : {fft2::PlanOptions{256, 3, 5}, fft2::PlanOptions{1024, 2, 3}}) {
-            run_config(size_t{1} << 18, 3, cap, host_cap, static_cast<size_t>(shared_limit),
-                       variants, summary, options);
-        }
-        bool all_axes_executed = true;
-        for (const auto options : variants_for({}, variants)) {
-            const Counts& axis = summary.axes[options.radix_mode + 1][options.index_mode]
-                                             [options.smem_padding][options.tile_policy]
-                                             [options.twiddle_mode][options.cross_mode][options.io_mode];
-            std::cout << "VARIANT_SUMMARY index_mode=" << options.index_mode
-                      << " smem_padding=" << options.smem_padding << " tile_policy=" << options.tile_policy
-                      << " radix_mode=" << options.radix_mode << " twiddle_mode=" << options.twiddle_mode
-                      << " cross_mode=" << options.cross_mode << " io_mode=" << options.io_mode << " passed=" << axis.passed
-                      << " failed=" << axis.failed << " skipped=" << axis.skipped << '\n';
-            all_axes_executed = all_axes_executed && axis.passed != 0;
-        }
-        std::cout << "SUMMARY passed=" << summary.total.passed << " failed=" << summary.total.failed
-                  << " skipped=" << summary.total.skipped
-                  << " api=" << (api_ok ? "PASS" : "FAIL")
-                  << " axes=" << (all_axes_executed ? "PASS" : "FAIL") << '\n';
-        return summary.total.failed == 0 && all_axes_executed && api_ok ? 0 : 1;
+        std::cout << "SUMMARY passed=" << summary.passed << " failed=" << summary.failed
+                  << " skipped=" << summary.skipped << " api=" << (api_ok ? "PASS" : "FAIL") << '\n';
+        return summary.failed == 0 && api_ok ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << "FAIL error=" << error.what() << '\n';
-        std::cout << "SUMMARY passed=" << summary.total.passed << " failed=" << summary.total.failed + 1
-                  << " skipped=" << summary.total.skipped << '\n';
+        std::cout << "SUMMARY passed=" << summary.passed << " failed=" << summary.failed + 1
+                  << " skipped=" << summary.skipped << '\n';
         return 1;
     }
 }

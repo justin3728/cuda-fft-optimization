@@ -714,3 +714,9 @@ metrics. The source pins these choices; it supplies no GPU verification claims.
 API references: [VkFFT pinned release/source](https://github.com/DTolm/VkFFT/tree/v1.3.4),
 [Nsight Compute CLI filtering, metrics and replay settings](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html),
 [CUDA 13 device-property API changes](https://developer.nvidia.com/blog/whats-new-and-important-in-cuda-toolkit-13-0/).
+
+The fft2 benchmark and shared scripts also accept `--fft2-twiddle-mode 0|1`
+and `--fft2-cross-mode 0|1` (both default to 0). Variants files accept matching
+`tw=0|1` and `cx=0|1` fields; both participate in duplicate-config detection
+and are recorded in `variants.csv`. Nonzero label fields appear after `rx`
+and before `oop`, in `tw`, `cx` order; zero fields are omitted.

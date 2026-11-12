@@ -27,9 +27,15 @@ def shared_index(element, lane, lanes, padding=0):
     return np.asarray(element) * (lanes + padding) + np.asarray(lane)
 
 
-def shared_bytes(length, lanes, padding=0):
+def _validate_mode(mode, name):
+    if not isinstance(mode, (int, np.integer)) or mode not in (0, 1):
+        raise ValueError(f"{name} must be 0 or 1")
+
+
+def shared_bytes(length, lanes, padding=0, twiddle_mode=0):
     _validate_padding(padding)
-    return length * (lanes + padding) * np.dtype(np.complex128).itemsize
+    _validate_mode(twiddle_mode, "twiddle_mode")
+    return length * (lanes + padding + twiddle_mode) * np.dtype(np.complex128).itemsize
 
 
 def split_index(flat, divisor, index_mode=0):
@@ -60,19 +66,28 @@ def twiddle_table(length, exponents):
 class CrossTwiddles:
     n: int
     base: int
-    low: np.ndarray
-    high: np.ndarray
+    low: np.ndarray | None
+    high: np.ndarray | None
+    full: np.ndarray | None = None
+
+    @property
+    def table_bytes(self):
+        return sum(table.nbytes for table in (self.low, self.high, self.full) if table is not None)
 
     @classmethod
-    def build(cls, n):
+    def build(cls, n, cross_mode=0):
+        _validate_mode(cross_mode, "cross_mode")
         if not _power_of_two(n):
             raise ValueError("N must be a positive power of two")
         base = 1 << ((int(n).bit_length() - 1 + 1) // 2)
+        if cross_mode == 1:
+            return cls(n, base, None, None, twiddle_table(n, np.arange(n, dtype=np.uint64)))
         low = twiddle_table(n, np.arange(base, dtype=np.uint64))
         high = twiddle_table(n, np.arange(n // base, dtype=np.uint64) * np.uint64(base))
         return cls(n, base, low, high)
 
     def lookup(self, n2, k1, index_mode=0):
+        _validate_mode(index_mode, "index_mode")
         # CUDA uses uint64_t multiplication and modulo before hi/lo lookup.
         exponent = (np.asarray(n2, dtype=np.uint64) * np.asarray(k1, dtype=np.uint64))
         if index_mode == 1:
@@ -83,6 +98,8 @@ class CrossTwiddles:
             exponent = exponent.astype(np.uint32) & np.uint32(self.n - 1)
         else:
             exponent %= np.uint64(self.n)
+        if self.full is not None:
+            return self.full[exponent]
         high, low = split_index(exponent, self.base, index_mode)
         return self.high[high] * self.low[low]
 
@@ -141,14 +158,24 @@ _INTERNAL_ROOTS = np.array([1, _C-1j*_S, _H-1j*_H, _S-1j*_C,
                             -1j, -_S-1j*_C, -_H-1j*_H, -_C-1j*_S])
 
 
-def staged_block_fft(tile, padding=0, index_mode=0, radix_mode=1):
+def _block_storage(length, lanes, padding, twiddle_mode):
+    storage = np.full(shared_bytes(length, lanes, padding, twiddle_mode) // 16, complex(np.nan, np.nan))
+    roots = twiddle_table(length, np.arange(length, dtype=np.uint64))
+    if twiddle_mode == 1:
+        # Same tail allocation as CUDA; data exchange and padding never alias roots.
+        offset = length * (lanes + padding)
+        storage[offset:offset + length] = roots
+        roots = storage[offset:offset + length]
+    return storage, roots
+
+
+def staged_block_fft(tile, padding=0, index_mode=0, radix_mode=1, twiddle_mode=0):
     """One shared exchange buffer; registers survive all internal DIT stages."""
     length, lanes = tile.shape
     plan = radix_stage_plan(length, radix_mode)
-    storage = np.full(shared_bytes(length, lanes, padding) // 16, complex(np.nan, np.nan))
+    storage, roots = _block_storage(length, lanes, padding, twiddle_mode)
     positions = shared_index(np.arange(length)[:, None], np.arange(lanes), lanes, padding)
     storage[positions[bit_reverse_indices(length)]] = tile
-    roots = twiddle_table(length, np.arange(length, dtype=np.uint64))
     done = 0
     for bits in plan:
         mapping = staged_index_map(length, lanes, done, bits, padding, index_mode)
@@ -170,19 +197,18 @@ def staged_block_fft(tile, padding=0, index_mode=0, radix_mode=1):
     return storage[positions]
 
 
-def block_fft(tile, padding=0, index_mode=0, radix_mode=0):
+def block_fft(tile, padding=0, index_mode=0, radix_mode=0, twiddle_mode=0):
     """FFT along axis 0 of shared[element, lane], with CUDA's stage formulas."""
     if radix_mode != 0:
-        return staged_block_fft(tile, padding, index_mode, radix_mode)
+        return staged_block_fft(tile, padding, index_mode, radix_mode, twiddle_mode)
     length, lanes = tile.shape
     # Poison unused padding. Every load/store uses the physical CUDA layout;
     # an accidental padding read propagates NaN into the numerical gate.
-    storage = np.full(shared_bytes(length, lanes, padding) // 16, complex(np.nan, np.nan))
+    storage, roots = _block_storage(length, lanes, padding, twiddle_mode)
     lane = np.arange(lanes)
     positions = shared_index(np.arange(length)[:, None], lane, lanes, padding)
     reversed_positions = shared_index(bit_reverse_indices(length)[:, None], lane, lanes, padding)
     storage[reversed_positions] = tile
-    roots = twiddle_table(length, np.arange(length, dtype=np.uint64))
     span = 4
     while span <= length:
         quarter = span // 4
@@ -212,7 +238,7 @@ def block_fft(tile, padding=0, index_mode=0, radix_mode=0):
     return storage[positions]
 
 
-def choose_tile(length, other_length, shared_limit, requested=0, padding=0, tile_policy=0):
+def choose_tile(length, other_length, shared_limit, requested=0, padding=0, tile_policy=0, twiddle_mode=0):
     """Same host tile policies as the CUDA plan, including the legacy fallback."""
     if tile_policy not in (0, 1):
         raise ValueError("tile_policy must be 0 or 1")
@@ -221,25 +247,25 @@ def choose_tile(length, other_length, shared_limit, requested=0, padding=0, tile
     if shared_limit < 0 or requested < 0:
         raise ValueError("shared-memory limit and requested tile must be nonnegative")
     if requested:
-        if requested > other_length or shared_bytes(length, requested, padding) > shared_limit:
+        if requested > other_length or shared_bytes(length, requested, padding, twiddle_mode) > shared_limit:
             raise ValueError("requested tile exceeds dimension or shared-memory limit")
         return requested
-    if tile_policy == 1 and shared_bytes(length, 2, padding) > shared_limit:
-        return choose_tile(length, other_length, shared_limit, requested, padding, 0)
+    if tile_policy == 1 and shared_bytes(length, 2, padding, twiddle_mode) > shared_limit:
+        return choose_tile(length, other_length, shared_limit, requested, padding, 0, twiddle_mode)
     tile = other_length if tile_policy == 1 else min(8, other_length)
     budget = min(shared_limit, 32 * 1024) if tile_policy == 1 else shared_limit
     minimum = 2 if tile_policy == 1 else 0
-    while tile > minimum and shared_bytes(length, tile, padding) > budget:
+    while tile > minimum and shared_bytes(length, tile, padding, twiddle_mode) > budget:
         tile //= 2
     if tile_policy == 1:
         tile = max(2, tile)
-    if not tile or tile > other_length or shared_bytes(length, tile, padding) > shared_limit:
+    if not tile or tile > other_length or shared_bytes(length, tile, padding, twiddle_mode) > shared_limit:
         raise ValueError("automatic tile exceeds dimension or shared-memory limit")
     return tile
 
 
 def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 1024,
-                 index_mode=0, smem_padding=0, tile_policy=0, radix_mode=0):
+                 index_mode=0, smem_padding=0, tile_policy=0, radix_mode=0, twiddle_mode=0, cross_mode=0):
     """Execute both tiled passes for a vector or a (batch, N) array.
 
     Small N and asymmetric splits are permitted here to test the formulas;
@@ -255,9 +281,10 @@ def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 10
     if not _power_of_two(n1) or n1 <= 1 or n1 >= n or n % n1:
         raise ValueError("N1 must be a power-of-two factor strictly between 1 and N")
     n2 = n // n1
-    cols = choose_tile(n1, n2, shared_limit, tile_cols, smem_padding, tile_policy)
-    rows = choose_tile(n2, n1, shared_limit, tile_rows, smem_padding, tile_policy)
-    cross = CrossTwiddles.build(n)
+    _validate_mode(twiddle_mode, "twiddle_mode")
+    cols = choose_tile(n1, n2, shared_limit, tile_cols, smem_padding, tile_policy, twiddle_mode)
+    rows = choose_tile(n2, n1, shared_limit, tile_rows, smem_padding, tile_policy, twiddle_mode)
+    cross = CrossTwiddles.build(n, cross_mode)
     data = np.ascontiguousarray(values).reshape(-1)
     batch = values.size // n
     workspace = np.empty_like(data)
@@ -273,7 +300,7 @@ def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 10
             offsets = base + element[active] * n2 + n2_index[active]
             tile = np.zeros((n1, cols), dtype=np.complex128)
             tile.reshape(-1)[active] = data[offsets]
-            transformed = block_fft(tile, smem_padding, index_mode, radix_mode)
+            transformed = block_fft(tile, smem_padding, index_mode, radix_mode, twiddle_mode)
             # Same shared layout, now element == k1.
             k1 = element[active]
             result = transformed.reshape(-1)[active] * cross.lookup(n2_index[active], k1, index_mode)
@@ -286,7 +313,7 @@ def two_pass_fft(values, n1=None, tile_cols=0, tile_rows=0, shared_limit=99 * 10
             active = k1 < n1
             tile = np.zeros((n2, rows), dtype=np.complex128)
             tile[element[active], lane[active]] = workspace[base + k1[active] * n2 + element[active]]
-            transformed = block_fft(tile, smem_padding, index_mode, radix_mode)
+            transformed = block_fft(tile, smem_padding, index_mode, radix_mode, twiddle_mode)
             # Pass 2 STORE flat = k2 * R + lane: adjacent output k1's.
             k2, lane = split_index(np.arange(n2 * rows), rows, index_mode)
             k1 = first_row + lane

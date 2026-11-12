@@ -175,3 +175,38 @@ def test_variants_require_tuning_axes_in_file(bash, flag):
     assert result.returncode == 2
     assert "Choose variant tuning in FILE" in result.stderr
     assert not printed_commands(result.stdout)
+
+
+@pytest.mark.parametrize("axis", ["tw", "cx"])
+@pytest.mark.parametrize("value", ["2", "-1", "1,0", "99999999999", "1 {axis}=0"])
+def test_invalid_twiddle_cross_fields(bash, tmp_path, axis, value):
+    test_bad_variant_files_fail_before_running_any_commands(
+        bash, tmp_path, f"n1=0 c=0 r=0 {axis}=" + value.format(axis=axis))
+
+
+@pytest.mark.parametrize("line", [
+    "n1=0 c=0 r=0\nn1=0 c=0 r=0 tw=0 cx=0",
+    "n1=0 c=0 r=0 tw=01 cx=01\nn1=0 c=0 r=0 tw=1 cx=1",
+])
+def test_duplicate_twiddle_cross_configs(bash, tmp_path, line):
+    test_bad_variant_files_fail_before_running_any_commands(bash, tmp_path, line)
+
+
+@pytest.mark.parametrize("flag", ["--fft2-twiddle-mode", "--fft2-cross-mode"])
+def test_twiddle_cross_require_file(bash, flag):
+    test_variants_require_tuning_axes_in_file(bash, flag)
+
+
+def test_distinct_twiddle_cross_configs(bash, tmp_path):
+    variants = tmp_path / "axes.txt"
+    pairs = [(0, 0), (1, 0), (0, 1), (1, 1)]
+    variants.write_text("".join(f"n1=0 c=0 r=0 tw={tw} cx={cx}\n" for tw, cx in pairs))
+    result = subprocess.run([bash, "scripts/run_fft2_variants.sh", "--tag", "twcx_dry",
+                             "--variants", str(variants), "--log2", "16", "--profile-log2", "16",
+                             "--dry-run", "--ncu"], cwd=ROOT, text=True, capture_output=True, check=True)
+    for script in ["scripts/run_sweep.sh", "scripts/run_ncu.sh"]:
+        commands = [cmd for cmd in printed_commands(result.stdout) if script in cmd
+                    and cmd[cmd.index("--impls") + 1] == "fft2"]
+        assert [(cmd[cmd.index("--fft2-twiddle-mode") + 1],
+                 cmd[cmd.index("--fft2-cross-mode") + 1]) for cmd in commands] == [
+                     (str(tw), str(cx)) for tw, cx in pairs]

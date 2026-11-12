@@ -48,9 +48,15 @@ wsl -e bash -lc 'colab --auth oauth2 stop -s NAME'
 ```
 
 - **Ask the owner before allocating any runtime** (A100 or L4); **always `stop` right after** the results are downloaded. L4 ≈ 1.94 units/hr.
-- `colab ssh -s NAME -- CMD` is **not** supported in 0.7.5. Pattern that works: upload a bash script, start it detached from `colab exec` via `subprocess.Popen(["bash","-c","nohup /content/x.sh > /content/x.log 2>&1 &"])`, have the script touch `/content/x_done` at the end, and poll for that file (in a background loop, once a minute).
+- **SSH works (verified 2026-11-12, CPU runtime)** through `colab ssh --proxy-mode` as an OpenSSH ProxyCommand. The owner's WSL `~/.ssh/config` has `Host colab-*`, which maps `colab-NAME` to session `NAME`, user root.
+  - Flow: `colab --auth oauth2 new -s NAME --gpu A100`, then `ssh -o BatchMode=yes colab-NAME 'CMD'`, then `colab --auth oauth2 stop -s NAME`.
+  - The remote exit code comes back through ssh, and `git clone` of the public repo works on the runtime.
+  - Prefer this for gate commands. For long jobs use `nohup` plus a done-file, and poll over ssh.
+- Old `colab exec` pattern (still valid fallback; note `colab ssh -s NAME -- CMD` itself is not supported in 0.7.5): upload a bash script, start it detached from `colab exec` via `subprocess.Popen(["bash","-c","nohup /content/x.sh > /content/x.log 2>&1 &"])`, have the script touch `/content/x_done` at the end, and poll for that file (in a background loop, once a minute).
 - On the runtime, `git clone` the public repo branch directly (no upload of code needed). `tar` results excluding `build/`, download, and commit only a compact subset (CSVs, `limits.json`, ncu summary `.md`/`.csv`, VkFFT manifests). Full `.ncu-rep` files and logs stay out of the repo.
 - A100 allocation can fail (`Bad Gateway`, timeouts); retry once, then ask whether to fall back to L4.
+- **Do not request High-RAM** (`--high-mem` in the CLI, "大量 RAM" in the UI). The owner observed that A100 is much easier to get with it off. The CLI default is off. The jobs here do not need it.
+- **Accounts:** the CLI credential is `~/.config/colab-cli/token.json`. Since 2026-11-12 it holds the owner's second account, the one that got an A100. The first account's token is saved as `token.account1.json`. To switch, rename the files; there is no login command, and a missing `token.json` triggers a browser OAuth flow the owner must complete.
 - Colab environment (Nov 2026): CUDA 13.0, driver 580.x, ncu 2025.3.1 preinstalled with counter access, root, Python 3.13. CUDA 13 cannot build `sm_61` (legacy Makefile default) → always pass `CUDA_ARCH=sm_80` (`sm_89` on L4).
 - Notebook fallback (owner presses Run all): `notebooks/colab_preflight.ipynb`. Never drive Colab through a browser.
 

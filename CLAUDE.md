@@ -24,8 +24,16 @@ Planning was delegated to Claude on 2026-11-12 (`docs/plan.md` §8).
 2. Merge only when CI is green and, for any PR touching `fft2/` or `bench/`, the L4 gate exits 0. Run the gate **before** merging, not after.
 3. Merge through GitHub (button or API) so the PR shows as merged. Write the review verdict as a PR comment, not only in the merge commit.
 4. Keep each PR under ~600 changed lines (excluding `results/`); split larger tasks.
-5. At most 2 Codex PRs open at once. Do not dispatch tasks without a recorded hypothesis or a confirmed gap behind them.
+5. At most 2 Codex PRs open at once. Every task traces to a recorded hypothesis or a confirmed gap. To use Codex quota that would otherwise expire, pick small tasks from that list rather than speculative tooling.
 6. Book an A100 only when a batch of A/B comparisons is ready to run together.
+
+## Coding principles (Codex and Claude)
+Adapted from the Karpathy-inspired guidelines. They apply to every change in this repo.
+
+1. **Think before coding.** If the task spec is ambiguous, write your assumptions in the PR description. Do not silently pick one interpretation. If a simpler approach exists than the spec suggests, say so in the PR.
+2. **Simplicity first.** Write the minimum code that meets the spec: no options, flags, abstractions, or error handling that the spec did not ask for. If the diff grows past the spec's size cap, stop and split it.
+3. **Surgical changes.** Touch only the paths the spec allows. Do not reformat, rename, or "improve" adjacent code. Never change protected legacy files. Remove only what your own change made unused; mention other dead code in the PR instead of deleting it.
+4. **Goal-driven.** "Done" means the spec's gate commands exit 0. Write or extend the test or gate first, then make it pass. Report results exactly as run; never claim performance without GPU data.
 
 ## Writing Codex tasks (`docs/codex-tasks/*.md`)
 - **Size every task to fit one Codex 5-hour usage window** (the owner is on ChatGPT Plus). Split larger work into sequential tasks.

@@ -62,7 +62,7 @@
 
 ---
 
-## L002 — 2026-11-11 — T2 2-pass v1 正確性 gate（Colab **L4**，非目標 GPU）（**草稿，待使用者審閱**）
+## L002 — 2026-11-11 — T2 2-pass v1 正確性 gate（Colab **L4**，非目標 GPU）
 
 **來源**：PR #2 @ 87597e8，`notebooks/t2_gate.ipynb`，`results/t2_gate_l4_20261111/summary.md`。
 
@@ -103,7 +103,7 @@
 - 建議：在 T4b 的驗收標準加入「shared memory/block 與 blocks/SM」，或另開一個 T4d 專門處理 H13。
 - A100 跑 T1 full，取得實測 HBM/L2 上限與 cuFFT/VkFFT baseline，「% of 上限」才有分母。
 
-## L004 — 2026-11-12 — 合併後工具冒煙測試 + H13 tile sweep 縮小版（Colab **L4**，非目標 GPU）（**草稿，待使用者審閱**）
+## L004 — 2026-11-12 — 合併後工具冒煙測試 + H13 tile sweep 縮小版（Colab **L4**，非目標 GPU）
 
 **來源**：main @ f20c70e（已 merge PR #1/#3/#5/#6/#7）。Claude 經 SSH 在 L4 執行，`CUDA_ARCH=sm_89`。精簡結果在 `results/smoke_t1_l4_quick_20261112/` 和 `results/smoke_h13_l4_20261112/`。ncu 設定為 `--clock-control none`、`--cache-control all`。**L4 數字只作冒煙測試，不是正式數據。**
 

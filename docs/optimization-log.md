@@ -242,3 +242,35 @@
 - 2^24：VkFFT 在 FP64 刻意用 3 趟；fft2 的 2 趟（每次 2 欄、128 KiB）是在賭 VkFFT 式的 register I/O 可以讓 2 趟跑贏 3 趟。若 T4e 之後 2^24 仍離 HBM 上限很遠，3 趟是退路。
 
 **下一步**：T4e 改寫為 VkFFT 式的編譯期形狀加 register I/O（`docs/codex-tasks/T4e-fft2-load-mlp.md`），並以 `io_mode` 做 A/B。
+
+## L008 — 2026-11-13 — A/B：VkFFT 式 register I/O（H15/T4e）、twiddle/cross（H12/T4c）、T4d 預設（**A100-SXM4-40GB**）（**草稿，待使用者審閱**）
+
+**來源**：分支 `codex/t4e-fft2-register-io` @ 886f800（T4c + T4d + T4e），Claude 經 SSH 在 Colab A100 執行（只編 sm_80，gate 和 A/B 在同一次配置）。結果在 `results/t4e_a100_20261113/`（`summary.md` 有完整表格）。依使用者指示只量新變體：cuFFT 只在 2^20 和 2^24 b1 重新計時當作機器檢查（與 L006 差 < 0.2%），比較時引用 L006 的 cuFFT 和 VkFFT。ncu 設定同 L005。全部列都是 `ok`，rel L2 ≤ 5.9e-16。
+
+**gate**：`fft2_test --variants` 596 passed / 0 failed；io=1 和 io=2 在預設 plan 的 2^16–2^24 都通過。36 個 kernel 有少量 spill（24–80 B），全部是 lanes 5 或 7 的 io=1 實例，已由 9dde298 移除。
+
+**hot 中位數 µs（r3 = T4d 預設 + io=2，不開 tw/cx）**
+
+| 尺寸 | L006 最佳 | r0 tw/cx + io=2 | r3 io=2 | cuFFT | r3 為 cuFFT 的 |
+|---|---|---|---|---|---|
+| 2^16 b1 | 14.9 | 13.8 | 19.6 | 14.0 | 71% |
+| 2^16 b512 | 1843 | 1747 | 1611 | 1597 | 99% |
+| 2^18 b1 | 36.1 | 32.1 | 29.2 | 23.7 | 81% |
+| 2^20 b1 | 107.6 | 122.4 | **93.5** | 92.5 | 99% |
+| 2^20 b32 | 2836 | 3037 | 2320 | 1833 | 79% |
+| 2^22 b1 | 457.1 | 556.5 | 374.2 | 320.7 | 86% |
+| 2^22 b8 | 3378 | 3958 | 2546 | 2032 | 80% |
+| 2^24 b1 | 2568 | 3755 | **1845** | 1261 | 68% |
+| 2^24 b2 | 5117 | 7546 | 3622 | 2497 | 69% |
+
+**解讀**
+- **H15 證實（io=2）**：r3 和 L006 最佳都沒開 tw/cx，差別主要在 io=2。2^24 b1 快 1.39 倍（2568 → 1845 µs），2^22 b1 快 1.22 倍，2^20 b1 快 1.15 倍，與 cuFFT 打平（93.5 vs 92.5 µs）。io=1（只把 load 分批、仍先寫 shared）幾乎全面比 io=2 差，有時比 io=0 還差：關鍵是 VkFFT 那種「載進 register 就先做第一段 radix」，不只是多發 load。
+- **H12 失敗（tw=1、cx=1）**：大尺寸明顯退步，2^24 b1 慢一倍（r0 3755 vs r3 1845 µs）。ncu 2^24 b1：
+  - `cx=1` 的長度 N cross 表在 2^24 是 256 MiB，遠大於 L2，pass 1 從 DRAM 讀了 1196 MB，是理想 268 MB 的 4.5 倍；2^20 也多讀 1.7 倍。
+  - `tw=1` 把 roots 放進 shared 後，pass 2 的 shared 讀取 bank conflict 從 0.03M 暴增到 16M，pass 2 從 645 升到 1258 µs。
+  - 小尺寸（2^16）r0 有時較快，但雜訊約 ±10%，不足以當證據。兩個選項維持預設關閉。
+- **2^24 剩餘差距在 pass 1**：r3 的 pass 1 是 1191 µs（HBM copy 上限的 33%），pass 2 是 645 µs（61%）。兩個 pass 的 DRAM 流量都已是理想值（讀 270 / 269 MB），所以不是多餘流量，而是存取效率：pass 1 每列只讀 2 欄（32 B），一個 warp 的一次 load 要碰 16 條 cache line，首要 stall 是 long_scoreboard 44%、lg_throttle 16%。VkFFT 在這一步讀 8 欄（128 B），代價是 2^24 用 3 趟（L007）。
+
+**建議（推論，待使用者決定）**
+1. 預設值：`io_mode=2` 改為預設（register radix 的路徑）；`twiddle_mode`、`cross_mode` 維持 0，並在 README 記為失敗的假設。
+2. 這是 M1 的檢查點：2-pass 在 2^20 已與 cuFFT 打平，2^16–2^22 為 cuFFT 的 71–99%，2^24 為 68–70%。要繼續追 2^24，選項是 (a) pass 1 一次讀更多欄（需要更少 shared 的 pass 1 設計），或 (b) 像 VkFFT 一樣 2^24 改 3 趟。

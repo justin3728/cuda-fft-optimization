@@ -77,19 +77,21 @@
 | ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
 | T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ PR #1 已 merge，等 A100 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
-| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 🔍 PR #2 已審（CUDA 13.5 sm_80/sm_89 零警告編譯、pytest 193 passed）；**L4 gate 通過**（28 passed / 0 failed / 1 skip，rel L2 ≤ 6.1e-16，每次 execute 2 kernels，`results/t2_gate_l4_20261111/`）；**G4 正確性通過**（2026-11-12）；**A100 gate 通過**（2026-11-12，`results/t2_gate_a100_20261112/`）→ ⏳ 使用者 merge |
-| T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend + 變體 A/B 腳本（`docs/codex-tasks/T2b-bench-fft2-backend.md`，分支疊在 T1+T2 上） | Codex | 📤 2026-11-11 晚交給 Codex |
-| T3 CI | GitHub Actions：pytest、shellcheck、dry-run、CUDA 13 容器 compile-only（`docs/codex-tasks/T3-ci.md`；只動 `.github/`，目錄不存在時 skip） | Codex | 📤 2026-11-11 晚交給 Codex |
+| M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | ✅ PR #2 已 merge（L4/G4/A100 gate 通過，見 L003） |
+| T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend + 變體 A/B 腳本（`docs/codex-tasks/T2b-bench-fft2-backend.md`，分支疊在 T1+T2 上） | Codex | ✅ 2026-11-12 merge PR #7（pytest、shellcheck 過；full dry-run ncu 上限 352）。GPU 待確認：NVTX 跳脫、每次 2 kernels、oop 正確性。預設變體檔對 H13 覆蓋不足，A100 改用自訂 tile 清單 |
+| T2c | bench／變體腳本加 `--fft2-index-mode`、`--fft2-smem-padding`，讓 H9/H10 能跟 tile sweep 同一次 A100 A/B（`docs/codex-tasks/T2c-bench-fft2-variant-axes.md`） | Codex | 📝 待交給 Codex |
+| T3 CI | GitHub Actions：pytest、shellcheck、dry-run、CUDA 13 容器 compile-only（`docs/codex-tasks/T3-ci.md`；只動 `.github/`，目錄不存在時 skip） | Codex | ✅ 2026-11-12 merge PR #3（main 與 T1+T2 整合兩次 run 皆綠） |
 | Harness | `scripts/colab/run.sh`：一次 GPU 執行的完整流程，失敗也自動 stop | Claude | ✅ 2026-11-11（CPU runtime 端到端測試） |
 | ~~T3~~ | 併入 T2 | — | ✖ |
-| T4a | fft2 變體 1：32-bit shift/mask 索引（H9）、shared padding（H10），opt-in，預設輸出不變 | Codex | 📤 2026-11-11 晚交給 Codex |
+| T4a | fft2 變體 1：32-bit shift/mask 索引（H9）、shared padding（H10），opt-in，預設輸出不變 | Codex | ✅ 2026-11-12 merge PR #6（預設維持 v1 算式）。整合修正 db09a7a：ncu 名稱檢查接受 template kernel。GPU 待驗：`fft2_test --variants`。bench 尚不能選 index_mode/padding → T2c |
 | T4b | fft2 變體 2：register radix-8/16（H11）＋ **H13 附錄**（shared 只做交換、`tile_policy` 佔用率導向，2026-11-12 加），疊在 T4a 上 | Codex | 📝 尚未開始；連同附錄交給 Codex |
 | T4c | fft2 變體 3：twiddle 存取（shared 暫存 / 遞推 / 單表 cross twiddle，H12），疊在 T4b 上 | Codex | 📤 T4b 推上去後接著做 |
-| T6 | `scripts/a100_session.sh`：一次 A100 allocation 跑完 gate + T1 full + 變體 + 報告，可續跑、有時間預算 | Codex | 📤 2026-11-11 晚 |
-| T7 | `fft2/tools/plan_explorer.py`：不靠 GPU 預測 occupancy、coalescing、bank conflict（標為模型預測） | Codex | 📤 2026-11-11 晚 |
-| T8 | README 作品集骨架（不含任何數字，留 placeholder 給 T5a 填） | Codex | 📤 2026-11-11 晚 |
+| T6 | `scripts/a100_session.sh`：一次 A100 allocation 跑完 gate + T1 full + 變體 + 報告，可續跑、有時間預算 | Codex | 📤 2026-11-11 晚；分支已有 commits，尚未開 PR |
+| T7 | `fft2/tools/plan_explorer.py`：不靠 GPU 預測 occupancy、coalescing、bank conflict（標為模型預測） | Codex | 📤 2026-11-11 晚；分支已有 commits，尚未開 PR |
+| T8 | README 作品集骨架（不含任何數字，留 placeholder 給 T5a 填） | Codex | 📤 2026-11-11 晚；分支已有 commits，尚未開 PR |
 | T4.x | A100 一次 allocation A/B 所有變體 → 依 ncu 決定預設值（每項一個 log 條目） | Claude | ⏳ |
-| T5a | `make_report.sh`：從 `results/<tag>/` 自動產生瓶頸分析 Markdown（不手打數字） | Codex | 📤 2026-11-11 晚交給 Codex |
+| T5a | `make_report.sh`：從 `results/<tag>/` 自動產生瓶頸分析 Markdown（不手打數字） | Codex | ✅ 2026-11-12 merge PR #5。已知缺口：fft2 標籤列被濾掉 → T5a-fix-1 |
+| T5a-fix-1 | 報告產生器以 family 比對 impl，保留 `fft2[...]` 各變體（`docs/codex-tasks/T5a-fix-1.md`） | Codex | 📝 待交給 Codex |
 | T5 | batched 調優、README 瓶頸分析與 before/after | Codex / Claude | ⏳ |
 | M1 檢查點 | 與使用者討論是否追 cuFFT | 全體 | ⏳ |
 
@@ -105,6 +107,7 @@
 - **2026-11-12**：T2 gate 在 **A100-SXM4-40GB 通過**（使用者用另一個帳號連上，Colab UI Run all）。正確性 28/0/1，每次 execute 2 kernels，DRAM 讀 1.00 趟、寫 0.94–0.98 趟。另在 G4（sm_120）通過正確性。見 L003、`results/t2_gate_a100_20261112/`、`results/t2_gate_g4_20261112/`。
 - v1 在 A100 上 2^24 b1 合計 3.22 ms，等效頻寬只有 282–408 GB/s。ncu 顯示**佔用率被 shared memory 限在 12.5%**（每 SM 1 block）。
 - 2026-11-12：使用者把規劃安排交給 Claude（§8）。Codex 分支已推上：T1（含 fix-1）、T2b、T3、T4a、T5a、T6、T7、T8；T4b、T4c 尚未開始。
+- **2026-11-12（續）**：PR #1、#3、#7、#6、#5 全部審完並 merge 進 main（含整合修正 db09a7a）。新開 T2c、T5a-fix-1 兩個小修正 prompt。T6/T7/T8 分支有 commits 但沒開 PR。
 - **下一步（Claude 排定，依序）**
   1. merge PR #2（T2）。
   2. 審 + merge，依相依順序：PR #1 T1（複審 fix-1 @ dce6093）→ T3 CI → T2b（疊在 T1+T2 上）→ T4a → T6 → T5a / T7 / T8。每個審查發現就寫成修正 prompt 交給 Codex。

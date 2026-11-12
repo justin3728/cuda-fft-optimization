@@ -538,6 +538,102 @@ or configure `options nvidia NVreg_RestrictProfilingToAdminUsers=0` and reload
 the driver modules/reboot. Container root alone may not grant host counter
 access. The runner still attempts analysis and reports the failed ncu stage.
 
+## Report
+
+Generate a bottleneck report from an existing run without a GPU or new
+measurements:
+
+```bash
+scripts/make_report.sh --tag smoke_l4_20261111
+scripts/make_report.sh --tag a100_after --baseline-tag a100_before \
+  --impls legacy,cufft,vkfft,fft2 --plots --out /tmp/fft-report.md
+```
+
+The default implementation list is `legacy,cufft,vkfft,fft2`. Output goes to
+stdout unless `--out` names a **new** file in an existing directory. The wrapper
+works from any working directory and honors `PYTHON`. The reporter never writes
+to the input results directory, overwrites an existing report, or runs other
+analysis/measurement scripts. `--results-root DIR` selects an alternate parent
+of tag directories, useful for copied fixtures. `--plots` links only existing
+PNGs beneath the current run's `plots/`, relative to the report's directory
+(the current directory for stdout); it does not regenerate plots.
+
+The header reads `env.txt`, `bandwidth/limits.json`, `ncu/version.txt`, and
+`ncu/index.csv` / `ncu/commands.txt`. It records the captured date and clocks,
+driver/toolkit/profiler versions, and recorded ncu cache/clock policies; it does
+not infer settings from script defaults or infer a GPU from a tag. A GPU other
+than a verified `A100-SXM4-40GB` (including missing GPU metadata) produces the
+prominent **"smoke test, not official numbers"** banner. `NVIDIA ` is accepted
+as a vendor prefix for that exact SKU. The compact historical L4 smoke run
+omits environment/index/version captures, so its corresponding header cells
+are deliberately unavailable.
+
+The tables contain measured HBM read/write/copy and L2 read/copy limits,
+plateau metadata, every per-size pass floor, unprofiled sweep medians, and
+profiled launches. Sweep input is `sweep/raw.csv`, or `sweep/derived.csv` if raw
+is absent. Joins preserve actual N, batch, batch label, timing mode and optional
+`impl_detail`; variants are separate rows. Requested implementations without
+measurements remain visible. `wrong`, `unsupported`, `error`, and missing
+statuses cannot produce derived performance metrics. Speedup is
+`t_cufft / t_impl`, and passes-equivalent is `t_impl / t_pass`, where `t_pass`
+is the successful, same-key, same-mode **in-place** median from
+`bandwidth/pass_floor.csv`. Times are displayed in microseconds.
+
+Profiles prefer `ncu/summary/*.csv`, with fallback to normalized CSV/Markdown
+tables directly under `ncu/`. This supports the older compact L4 exports and
+the current T1 schema without changing either. Each distinct kernel launch
+retains its time, DRAM/L2 bytes, achieved occupancy, shared load/store bank
+conflicts, and two recorded largest stall reasons. Calibrated DRAM R/ideal and
+W/ideal are `observed_direction_bytes / dram_traffic_factor / (16*N*batch)`.
+The factor must come from the 4096 MiB, cache-all row of
+`ncu/summary/copy_calibration.csv` (or the historical `ncu/copy_calibration.csv`);
+no uncalibrated ratio is substituted when that file is missing.
+
+Existing `pct_mixed_hbm_limit`, `pct_l2_limit` and `working_set_fits_l2` columns
+are preserved, including explicitly unavailable values. If these columns are
+absent from an older table, they are calculated directly from the recorded
+traffic, duration, dimensions and measured limits using the formulas in the
+Nsight Compute section above. DRAM percentages retain observed counter bytes;
+calibration applies to the R/W pass ratios. Percentages and negative gaps are
+never clipped. L2 residency uses the same conservative two-buffer proxy and
+prints the deferred-write warning; it is not a claim about unknown library
+workspace residency.
+
+The sweep gap columns use
+`gap_us = 1000*(t_impl_ms - calibrated_memory_passes*t_pass_ms)` and
+`gap_pct = 100*gap_us/(1000*t_impl_ms)`. Passes come from the exact matching
+`config_totals.csv` row, with the calibration CSV required; if only a raw
+`effective_memory_passes` column exists, it is divided by the recorded factor.
+Hot rows select ncu `cache_control=none`; cold rows select `all`. The reporter
+never substitutes another policy, guesses an algorithmic pass count from an
+implementation name or kernel count, or extrapolates a sampled profile.
+Sampled/extrapolated totals cannot supply a measured gap. This is a comparison
+with an **observed-traffic floor**, with the ncu-versus-sweep cache-policy
+difference stated next to the table. For L2-resident configurations, DRAM passes
+undercount deferred writes and this gap is not an algorithmic bandwidth bound;
+use the per-kernel L2 metrics for assessment.
+
+`--baseline-tag` adds the baseline's captured environment and compares only
+shared configuration/variant/timing keys. Time delta is `after - before`, and
+percentage delta is `100*(after-before)/before`; both rows must be `ok`.
+An absent `impl_detail` is compatible with an empty detail, while different
+named variants never match. Configurations exclusive to one run do not acquire
+invented before/after values.
+
+Missing files, columns, counters, invalid/nonpositive denominators, and absent
+join partners produce `n/a` with footnotes naming their source file/column or
+join key. No specification-sheet limits, interpolation, hardcoded performance
+numbers, or implicit zero counters fill gaps. Duplicate join keys are errors.
+The source-preserving fixture in `tests/fixtures/report/` records the main
+commit it was copied from and includes a generated `golden.md` snapshot.
+Temporary arithmetic/schema fixtures in tests are not new GPU results.
+
+```bash
+pytest tests -q
+shellcheck scripts/make_report.sh
+scripts/make_report.sh --tag smoke_l4_20261111
+```
+
 ## Environment, validation and remaining GPU checks
 
 `env.txt` records `nvidia-smi -q`, supported clocks, driver/GPU SKU/memory/ECC/

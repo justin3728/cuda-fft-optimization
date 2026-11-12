@@ -1,0 +1,9 @@
+impl,N,batch,batch_mode,cache_control,kernel_id,kernel,duration_us,dram_read_bytes,dram_write_bytes,lts_bytes,achieved_occupancy_pct,shared_bank_conflicts_ld,shared_bank_conflicts_st,stall_1,stall_1_pct,stall_2,stall_2_pct,fixture_note
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,none,launch0,synthetic_oop_pass1,1,1024,1024,2048,25,0,0,barrier,10,long_scoreboard,5,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,none,launch1,synthetic_oop_pass2,1,1024,1024,2048,25,0,0,barrier,10,long_scoreboard,5,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,all,launch0,synthetic_oop_pass1,2,1024,1024,2048,25,0,0,barrier,10,long_scoreboard,5,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,all,launch1,synthetic_oop_pass2,2,1024,1024,2048,25,0,0,barrier,10,long_scoreboard,5,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=0,c=0,r=0]",128,1,b1,none,launch0,synthetic_auto_pass1,2,2048,2048,4096,12.5,0,0,barrier,20,long_scoreboard,10,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=0,c=0,r=0]",128,1,b1,none,launch1,synthetic_auto_pass2,2,4096,4096,8192,12.5,0,0,barrier,20,long_scoreboard,10,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=0,c=0,r=0]",128,1,b1,all,launch0,synthetic_auto_pass1,4,2048,2048,4096,12.5,0,0,barrier,20,long_scoreboard,10,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=0,c=0,r=0]",128,1,b1,all,launch1,synthetic_auto_pass2,4,4096,4096,8192,12.5,0,0,barrier,20,long_scoreboard,10,synthetic CPU arithmetic constant; not a GPU measurement

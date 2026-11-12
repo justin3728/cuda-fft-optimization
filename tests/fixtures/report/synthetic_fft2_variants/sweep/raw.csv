@@ -1,0 +1,7 @@
+impl,N,batch,batch_mode,timing_mode,status,time_ms_median,fixture_note
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,hot,ok,0.002,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,cold,ok,0.004,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=0,c=0,r=0]",128,1,b1,hot,ok,0.004,synthetic CPU arithmetic constant; not a GPU measurement
+"fft2[n1=0,c=0,r=0]",128,1,b1,cold,ok,0.008,synthetic CPU arithmetic constant; not a GPU measurement
+cufft,128,1,b1,hot,ok,0.008,synthetic CPU arithmetic constant; not a GPU measurement
+cufft,128,1,b1,cold,ok,0.020,synthetic CPU arithmetic constant; not a GPU measurement

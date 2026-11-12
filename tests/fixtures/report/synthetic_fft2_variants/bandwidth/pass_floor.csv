@@ -1,0 +1,3 @@
+N,batch,batch_mode,timing_mode,copy_kind,status,time_ms_median,fixture_note
+128,1,b1,hot,inplace,ok,0.001,synthetic CPU arithmetic constant; not a GPU measurement
+128,1,b1,cold,inplace,ok,0.002,synthetic CPU arithmetic constant; not a GPU measurement

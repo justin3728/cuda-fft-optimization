@@ -12,6 +12,9 @@ from make_report import Missing, Record, Run, gap_values, generate_report, kerne
 
 FIXTURE = Path(__file__).parent / "fixtures/report"
 TAG = "smoke_l4_20261111"
+VARIANT_TAG = "synthetic_fft2_variants"
+AUTO_FFT2 = "fft2[n1=0,c=0,r=0]"
+OOP_FFT2 = "fft2[n1=1024,c=4,r=8,oop=1]"
 
 
 def test_missing_metadata_and_non_a100_banner():
@@ -114,6 +117,102 @@ def test_fft2_optional_impl_detail(tmp_path, with_detail):
     else:
         assert "impl_detail" not in report
         assert "| fft2 | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
+
+
+def test_family_selection_preserves_full_labels_and_auto_first(tmp_path):
+    # Synthetic CPU schema/arithmetic cases, not GPU measurements. The oop label
+    # sorts before the auto label lexically, so this checks the explicit priority.
+    oop = "fft2[n1=0,c=0,r=0,oop=1]"
+    rows = [dict(impl=impl, N=128, batch=1, batch_mode="b1", timing_mode=timing,
+                 status="ok", time_ms_median=time)
+            for impl, time in ((oop, .004), (AUTO_FFT2, .002), ("cufft", .008))
+            for timing in ("hot", "cold")]
+    write_rows(tmp_path / "variants/sweep/raw.csv", rows)
+    report = generate_report(tmp_path, "variants", impls=("fft2",))
+    sweep = report.split("## FFT sweep")[1].split("## Per-kernel profiles")[0]
+    assert sweep.index(f"| {AUTO_FFT2} |") < sweep.index(f"| {oop} |")
+    assert f"| {AUTO_FFT2} | hot | 2 | 4 |" in sweep
+    assert f"| {oop} | hot | 4 | 2 |" in sweep
+    assert "| cufft |" not in sweep
+    assert "fft2[" not in generate_report(tmp_path, "variants", impls=("cufft",))
+
+
+def test_labelled_fft2_fixture_keeps_each_series_in_every_section():
+    report = generate_report(FIXTURE, VARIANT_TAG, baseline_tag=VARIANT_TAG, impls=("cufft", "fft2"))
+    sweep, rest = report.split("## FFT sweep")[1].split("## Per-kernel profiles")
+    kernels, comparison = rest.split("## Before / after")
+    for section in (sweep, kernels, comparison):
+        assert section.index(AUTO_FFT2) < section.index(OOP_FFT2)
+        assert section.count(AUTO_FFT2) == 2
+        assert section.count(OOP_FFT2) == 2
+    assert f"| {AUTO_FFT2} | hot | 4 | 2 | 4 | ok | 3 | 1 | 25 |" in sweep
+    assert f"| {AUTO_FFT2} | cold | 8 | 2.5 | 4 | ok | 3 | 2 | 25 |" in sweep
+    assert f"| {OOP_FFT2} | hot | 2 | 4 | 2 | ok | 1 | 1 | 50 |" in sweep
+    assert f"| {OOP_FFT2} | cold | 4 | 5 | 2 | ok | 1 | 2 | 50 |" in sweep
+    for kernel in ("synthetic_auto_pass1", "synthetic_auto_pass2", "synthetic_oop_pass1", "synthetic_oop_pass2"):
+        assert kernels.count(f"| {kernel} |") == 2
+
+
+def test_auto_label_precedes_lexically_earlier_label_in_every_section(tmp_path):
+    target = tmp_path / "current"
+    shutil.copytree(FIXTURE / VARIANT_TAG, target)
+    oop = "fft2[n1=0,c=0,r=0,oop=1]"
+    for path in target.rglob("*.csv"):
+        path.write_text(path.read_text(encoding="utf-8").replace(OOP_FFT2, oop), encoding="utf-8")
+    report = generate_report(tmp_path, "current", baseline_tag="current", impls=("fft2",))
+    sweep, rest = report.split("## FFT sweep")[1].split("## Per-kernel profiles")
+    kernels, comparison = rest.split("## Before / after")
+    for section in (sweep, kernels, comparison):
+        assert section.index(AUTO_FFT2) < section.index(oop)
+
+
+def test_labelled_fft2_cufft_only_cli_excludes_all_variants():
+    script = Path(__file__).resolve().parents[1] / "scripts/analysis/make_report.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--tag", VARIANT_TAG, "--baseline-tag", VARIANT_TAG,
+         "--impls", "cufft", "--results-root", str(FIXTURE)],
+        capture_output=True, encoding="utf-8", env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == generate_report(FIXTURE, VARIANT_TAG, baseline_tag=VARIANT_TAG, impls=("cufft",))
+    assert "fft2[" not in result.stdout
+    assert "synthetic_auto_pass" not in result.stdout
+    assert "synthetic_oop_pass" not in result.stdout
+    assert "| cufft | hot | 8 | 1 |" in result.stdout
+
+
+@pytest.mark.parametrize("source", ["index.csv", "config_totals.csv"])
+def test_labelled_profiles_from_index_or_totals_remain_visible(tmp_path, source):
+    target = tmp_path / "current"
+    shutil.copytree(FIXTURE / VARIANT_TAG, target)
+    (target / "ncu/summary/fft2_variants.csv").unlink()
+    other = "index.csv" if source == "config_totals.csv" else "config_totals.csv"
+    (target / "ncu" / other).unlink()
+    report = generate_report(tmp_path, "current", impls=("fft2",))
+    kernels = report.split("## Per-kernel profiles")[1].split("## Missing data")[0]
+    headings = [line for line in kernels.splitlines() if line.startswith("### impl=")]
+    assert len(headings) == 4
+    assert all(AUTO_FFT2 in line for line in headings[:2])
+    assert all(OOP_FFT2 in line for line in headings[2:])
+    assert f"Source: `results/current/ncu/{source} row" in kernels
+    assert "n/a[^missing-" in kernels
+
+
+def test_labelled_fft2_cufft_reference_uses_full_config_and_timing(tmp_path):
+    target = tmp_path / "current"
+    shutil.copytree(FIXTURE / VARIANT_TAG, target)
+    path = target / "sweep/raw.csv"
+    rows = read_rows(path)
+    cufft = next(row for row in rows if row["impl"] == "cufft" and row["timing_mode"] == "hot")
+    rows += [dict(cufft, **changes, time_ms_median="0.1")
+             for changes in (dict(N="256"), dict(batch="8"), dict(batch_mode="other"))]
+    write_rows(path, rows)
+    report = generate_report(tmp_path, "current", impls=("fft2",))
+    assert f"| 128 | 1 | b1 | {OOP_FFT2} | hot | 2 | 4 |" in report
+    assert f"| 128 | 1 | b1 | {OOP_FFT2} | cold | 4 | 5 |" in report
+    write_rows(path, [row for row in rows if row is not cufft])
+    report = generate_report(tmp_path, "current", impls=("fft2",))
+    assert f"| 128 | 1 | b1 | {OOP_FFT2} | hot | 2 | n/a[^missing-" in report
+    assert "unique cufft time_ms_median for ('128', '1', 'b1', 'hot')" in report
 
 
 def test_wrong_results_do_not_get_derived_metrics(tmp_path):
@@ -241,9 +340,12 @@ def test_before_after_partial_overlap(tmp_path):
     write_rows(current / "sweep/raw.csv", new)
     report = generate_report(tmp_path, "current", baseline_tag="before", impls=("legacy",))
     comparison = report.split("## Before / after")[1].split("## Missing data")[0]
-    assert "| 65536 | 1 | b1 | legacy | hot | 126.259 | 63.1296 | -63.1296 | -50 | ok | ok |" in comparison
-    assert "| 1048576 |" not in comparison
-    assert "| 16777216 |" not in comparison
+    shared, unmatched = comparison.split("### Non-overlapping sweep configurations")
+    assert "| 65536 | 1 | b1 | legacy | hot | 126.259 | 63.1296 | -63.1296 | -50 | ok | ok |" in shared
+    assert "| 1048576 |" not in shared
+    assert "| 16777216 |" not in shared
+    assert "| 1048576 | 1 | b1 | legacy | hot | before only |" in unmatched
+    assert "| 16777216 | 1 | b1 | legacy | hot | after only |" in unmatched
     assert "### Baseline environment: before" in comparison
     assert "smoke test, not official numbers" in comparison
 
@@ -258,6 +360,27 @@ def test_before_after_does_not_cross_variant_keys(tmp_path):
     report = generate_report(tmp_path, "current", baseline_tag="before", impls=("fft2",))
     assert "missing shared requested sweep configurations" in report
     assert "| -50 |" not in report
+
+
+def test_before_after_full_labels_and_non_overlapping_variants(tmp_path):
+    current, baseline = tmp_path / "current", tmp_path / "before"
+    for target in (current, baseline):
+        shutil.copytree(FIXTURE / VARIANT_TAG, target)
+    baseline_only = "fft2[n1=512,c=8,r=4]"
+    rows = read_rows(baseline / "sweep/raw.csv")
+    for row in rows:
+        row["time_ms_median"] = str(float(row["time_ms_median"]) * 2)
+        if row["impl"] == OOP_FFT2:
+            row["impl"] = baseline_only
+    write_rows(baseline / "sweep/raw.csv", rows)
+    report = generate_report(tmp_path, "current", baseline_tag="before", impls=("fft2",))
+    shared, unmatched = report.split("## Before / after")[1].split("### Non-overlapping sweep configurations")
+    assert f"| {AUTO_FFT2} | hot | 8 | 4 | -4 | -50 | ok | ok |" in shared
+    assert OOP_FFT2 not in shared
+    assert baseline_only not in shared
+    assert f"| {OOP_FFT2} | hot | after only |" in unmatched
+    assert f"| {baseline_only} | hot | before only |" in unmatched
+    assert "| cufft |" not in shared + unmatched
 
 
 def test_missing_baseline_is_reported(tmp_path):
@@ -314,6 +437,11 @@ def test_invalid_cli_arguments(tmp_path, arguments):
 
 def test_golden_report():
     assert generate_report(FIXTURE, TAG) == (FIXTURE / "golden.md").read_text(encoding="utf-8")
+
+
+def test_labelled_fft2_golden_report():
+    assert generate_report(FIXTURE, VARIANT_TAG, baseline_tag=VARIANT_TAG, impls=("cufft", "fft2")) == (
+        FIXTURE / "synthetic_fft2_variants.md").read_text(encoding="utf-8")
 
 
 def test_missing_sweep_column_remains_visible(tmp_path):

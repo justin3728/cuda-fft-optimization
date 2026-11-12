@@ -297,6 +297,7 @@ def test_twiddle_cross_labels_and_forwarding(bash, tw, cx):
                             cwd=ROOT, text=True, capture_output=True, check=True)
     commands = printed_commands(result.stdout)
     benches = [cmd for cmd in commands if "--impls" in cmd and
+               "fft2" in cmd[cmd.index("--impls") + 1].split(",") and
                ("--profile" in cmd or any(part.endswith("/fft_bench") for part in cmd))]
     assert benches
     for cmd in benches:

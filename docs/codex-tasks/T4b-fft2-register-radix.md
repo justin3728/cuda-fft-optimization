@@ -1,40 +1,51 @@
-# Codex Task T4b — fft2 tuning variants, round 2: register-level radix-8/16 sub-FFTs
+# Codex Task T4b — fft2 register-level radix-8/16 sub-FFTs (H11)
 
-> Paste everything below the line into Codex **after T4a is pushed** (it builds on it). Repo: `justin3728/cuda-fft-optimization`.
-> Create branch **`codex/t4b-fft2-radix`** from `codex/t4a-fft2-variants`. Open a draft PR targeting `codex/t4a-fft2-variants`.
+> Paste everything below the line into Codex **after T4t is merged into main**. Both tasks edit `fft2/fft2.cu`.
+> Create branch **`codex/t4b-fft2-radix`** from `main`. Open a PR targeting `main`.
+> (Revised 2026-11-12 after L005. The tile_policy part of the old addendum moved to T4t, with a rule the A100 data supports.)
 
 ---
 
 ## Context
-Read `CLAUDE.md`, `docs/plan.md` §5, `fft2/README.md` (incl. T4a's "Tuning variants"). `block_fft` currently does log2(L)/2 radix-4 stages, each a full shared-memory round trip plus a block barrier (e.g. L=1024 → 5 stages, 5 barriers, ~10 shared reads+writes per element). The legacy kernel showed `barrier` and shared bank conflicts as major stalls on L4 (L001). The standard fix (VkFFT, cuFFT-style) is: each thread loads R ∈ {8, 16} elements into registers, does a radix-R butterfly in registers (with internal twiddles as compile-time constants), applies inter-stage twiddles, and exchanges through shared memory only between radix-R stages → for L=1024 with R=16/16/4 or 8/8/16: 3 exchanges instead of 5.
+Read `AGENTS.md`, `CLAUDE.md`, `docs/plan.md` §5, and `fft2/README.md`. In `docs/optimization-log.md`, read L005.
 
-**H11** (hypothesis): fewer shared round trips and barriers raise achieved bandwidth of both passes; register pressure must stay ≤ ~128 regs/thread to keep ≥ 2 blocks/SM where shared memory allows.
+On A100 at 2^24 b1, fft2 v1 takes 3203 µs, against 1260 µs for cuFFT. Each kernel reaches only 22–28% of the measured HBM limit. Raising occupancy from 12.5% to 25% did not help, while cuFFT reaches about 88% at the same 25%. So the bottleneck is how `block_fft` works:
+- it runs log2(L)/2 radix-4 stages;
+- every stage is a full shared-memory round trip plus a block barrier;
+- L = 1024 needs 5 stages.
 
-## Hard constraints
-1. Only touch `fft2/`. Default (`PlanOptions{}`) output stays identical to v1; the new path is opt-in via `PlanOptions::radix_mode` (0 = v1 radix-4 shared, 1 = register radix-8, 2 = register radix-16; mixed last stage allowed). Add to `describe()`.
-2. Stage plan (which radices for a given log2 L, L = 2^8..2^12) computed on the host and passed as template/kernel parameters; document the plan table in the README.
-3. Twiddles: inter-stage twiddles from the existing precomputed tables (no runtime trig); radix-8/16 internal constants as `constexpr` (e.g. √2/2) — keep FP64 accuracy (rel L2 vs cuFFT must stay ≤ 1e-14 in the test; v1 achieves ~6e-16).
-4. CPU reference: add the same staged algorithm to `two_pass_model.py` (numpy) and test it against `numpy.fft` for every L and stage plan, including the exact element→thread→shared index maps the CUDA code uses (this is how we catch indexing bugs without a GPU).
-5. Extend `fft2_test --variants` with `radix_mode ∈ {1,2}` (× T4a's best-guess defaults `index_mode=1, smem_padding=1`, plus one combo with each T4a axis off). Keep total L4 runtime < ~5 min.
-6. Report per-kernel register count and spill from `nvcc -Xptxas -v` for sm_80 in the PR description (compile-time facts, not performance claims). If any variant spills, say so.
-7. Commit and push after each item. No performance claims.
+The standard fix:
+- each thread loads R ∈ {8, 16} elements into registers;
+- it does a radix-R butterfly in registers, with internal twiddles as compile-time constants;
+- it applies the inter-stage twiddles;
+- it exchanges through shared memory only between radix-R stages.
 
-## Addendum 2026-11-12 — occupancy (H13, from the A100 gate, optimization-log L003)
-On A100, v1 at 2^24 b1 uses 135 KB shared memory per block, which allows **1 block/SM, 12.5% occupancy** (theoretical and achieved). Registers are 34–38/thread. `choose_tile` picks the largest tile that fits the opt-in limit, so most sizes end up with about 128 KiB per block. The kernels are latency-bound: ~10 warp cycles per issued instruction, at roughly 20–25% of HBM spec.
-8. In the register-radix path, keep data in registers between stages. Size the shared-memory buffer to **one exchange**, not the whole tile plus a second copy, and reuse it across stages.
-9. Add `PlanOptions::tile_policy`:
-   - `0` = v1 behavior (largest tile that fits). This stays the default.
-   - `1` = occupancy-aware: the smallest tile with ≥ 2 lanes (32 B coalescing) that gives ≥ 3 resident blocks/SM. Use `cudaOccupancyMaxActiveBlocksPerMultiprocessor` with the kernel's actual dynamic smem. If no tile reaches 3 blocks/SM, fall back to the best one available.
-   - Report `smem_bytes` and `blocks_per_sm` for both passes in `describe()`.
-10. In the README, add a per-L table for sm_80 (164 KB smem/SM, 2048 threads/SM, 64K regs/SM). Columns: lanes, smem/block, regs/thread from ptxas, and resulting blocks/SM for the v1 path and the register path. These are compile-time and model facts, not performance claims.
-11. Add `tile_policy ∈ {0,1}` to `fft2_test --variants`.
+With this, L = 1024 needs 3 exchanges.
 
-If this task was already pasted into Codex before this addendum existed, paste this section as a follow-up message.
+**H11:** fewer shared round trips and barriers raise the achieved bandwidth of both passes, most of all at 2^24.
+
+## Task
+1. Add `PlanOptions::radix_mode` and report it in `describe()`:
+   - `0` = v1, and stays the default;
+   - `1` = register radix-8;
+   - `2` = register radix-16.
+
+   A mixed last stage is allowed. The host computes the stage plan for L = 2^8..2^12 and passes it as template parameters.
+2. Keep data in registers between stages. Size the shared buffer for **one exchange** and reuse it across stages.
+3. Twiddles:
+   - inter-stage: from the existing tables, with no runtime trig;
+   - radix-8/16 internal: `constexpr`.
+   - Accuracy: rel L2 vs cuFFT ≤ 1e-14; v1 reaches about 6e-16.
+4. CPU reference: add the staged algorithm to `fft2/reference/two_pass_model.py`, including the exact element → thread → shared index maps the CUDA code uses. Test it against `numpy.fft` for every L and stage plan.
+5. Add `radix_mode ∈ {1, 2}` to `fft2_test --variants`, crossed with `tile_policy ∈ {0, 1}`. Keep the L4 runtime under about 5 minutes.
+6. In the PR description, report the per-kernel registers and spills from `nvcc -Xptxas -v` for sm_80.
+
+## Constraints
+- Only touch `fft2/`. Output for the default options stays identical to v1.
+- Diff ≤ 600 lines, excluding tests and the README. If radix-16 would exceed that, deliver radix-8 only and say so in the PR.
+- Commit and push after each item.
+- No performance claims. Follow the Coding principles in `CLAUDE.md`.
 
 ## Gate
-CPU: `make -C fft2 test-cpu` (incl. new staged-model tests), sm_80/sm_89 builds zero warnings.
-GPU (Claude): `fft2/fft2_test --variants` exit 0 on L4; then A/B on A100 together with T4a variants.
-
-## Acceptance criteria
-- [ ] Opt-in register-radix path for both passes, CPU model + index-map tests, GPU variant tests.
-- [ ] README "Tuning variants" extended (stage plans, register/shared budgets per L, ptxas numbers).
+- CPU: `make -C fft2 test-cpu`, including the new staged-model tests; sm_80 and sm_89 builds with zero warnings.
+- GPU (Claude): on L4, `fft2/fft2_test --variants` exits 0. Then an A100 A/B together with the T4t and T2c variants.

@@ -326,3 +326,25 @@ def test_auto_radix_label_order_and_forwarding(bash, radix, label):
 @pytest.mark.parametrize("value", ["-2", "-01", "auto", "1,2", "99999999999"])
 def test_invalid_auto_radix_flags(bash, value):
     test_invalid_fft2_axes_fail_before_any_commands(bash, "--fft2-radix-mode", value)
+
+
+@pytest.mark.parametrize("io", [0, 1, 2])
+def test_io_label_order_and_forwarding(bash, io):
+    args = ["--tag", "io_dry", "--fft2-io-mode", f"0{io}", "--fft2-radix-mode", "-1",
+            "--fft2-tile-policy", "1", "--fft2-twiddle-mode", "1", "--fft2-cross-mode", "1",
+            "--fft2-out-of-place"]
+    result = subprocess.run([bash, "-c", 'source scripts/common.sh; t1_parse "$@"; t1_fft2_name',
+                             "test", *args], cwd=ROOT, text=True, capture_output=True, check=True)
+    assert result.stdout == "fft2[n1=0,c=0,r=0,tp=1,rx=auto,tw=1,cx=1" + (f",io={io}" if io else "") + ",oop=1]"
+    result = subprocess.run([bash, "scripts/run_t1_all.sh", *args, "--quick", "--dry-run"],
+                            cwd=ROOT, text=True, capture_output=True, check=True)
+    benches = [cmd for cmd in printed_commands(result.stdout) if "--impls" in cmd and
+               "fft2" in cmd[cmd.index("--impls") + 1].split(",") and
+               ("--profile" in cmd or any(part.endswith("/fft_bench") for part in cmd))]
+    assert benches
+    assert all(cmd[cmd.index("--fft2-io-mode") + 1] == str(io) for cmd in benches)
+
+
+@pytest.mark.parametrize("value", ["3", "-1", "1,0", "99999999999999999999", "1", "2"])
+def test_invalid_io_flags_or_legacy_radix(bash, value):
+    test_invalid_fft2_axes_fail_before_any_commands(bash, "--fft2-io-mode", value)

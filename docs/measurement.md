@@ -726,3 +726,43 @@ and `--fft2-cross-mode 0|1` (both default to 0). Variants files accept matching
 `tw=0|1` and `cx=0|1` fields; both participate in duplicate-config detection
 and are recorded in `variants.csv`. Nonzero label fields appear after `rx`
 and before `oop`, in `tw`, `cx` order; zero fields are omitted.
+
+## H15: compile-time register I/O (T4e, GPU validation pending)
+
+`PlanOptions::io_mode` and `--fft2-io-mode` accept 0 (default), 1 (straight-line
+register I/O), or 2 (fused first/last register stages). Nonzero modes require
+resolved register radix 1 or 2. Variants files accept `io=0|1|2`, default 0;
+the manifest and duplicate keys include it. Nonzero labels insert `,io=M`
+after `cx`, before `oop`. Bench/variant defaults remain explicit v1; use
+`tp=1 rx=-1` to select T4d's default plan. Plan descriptions report mode and
+`E=L*lanes/256` per pass.
+
+For io=1, thread `tid` owns `flat=tid+256*e`, `e=0..E-1`. Pass 1 splits flat
+as `(element,lane)=divmod(flat,lanes)`; pass 2 loads split it as
+`(lane,element)=divmod(flat,L)`. Both stores use lane-fast order. All input
+loads precede shared writes; all output shared reads precede global stores.
+Arithmetic and cross-table choices follow io=0, with GPU bit-identity required.
+
+For io=2, each first-stage butterfly owns `q + reverse_bits(t)*L/R`, with
+`flat=tid+256*g` split lane-fast in pass 1 and q-fast in pass 2. Its register
+butterfly writes shared at `reverse_bits(q)*R+t`. Middle stages use the existing
+DIT arithmetic. The final radix (including a smaller tail) reads
+`j+t*(L/Rlast)`, applies the external roots in registers, then writes global
+directly, including the pass-1 cross twiddle. No initial shared input round
+trip or final shared output round trip is needed. Inactive butterfly slots
+are masked; E describes the average when an explicit small tile underfills
+the block. GPU comparison with cuFFT must have relative L2 <= 1e-12.
+
+Shape assumption: compile lanes 1..8 and data tiles up to 163 KiB (A100's
+opt-in limit), covering both automatic tile policies on A100/L4 and existing
+partial-tile tests. Larger explicit shapes throw for nonzero io; io=0 retains
+its existing tile support. CPU models are hypothesis checks, not GPU evidence.
+The largest automatic shape is L=4096, lanes=2, E=32. Its ptxas registers/spills
+remain unmeasured until nvcc is available.
+
+For the L4 gate, build sm_89 and sm_80 with zero warnings/spills, run
+`fft2/fft2_test --variants`, then sweep 2^20 b1 with these three variant rows:
+`n1=0 c=0 r=0 tp=1 rx=-1 io=0`, the same with `io=1`, and with `io=2`.
+Require all rows `ok`; io=1 must pass the batch-1 byte comparison at every
+log2 16..24. A100 A/B covers all sizes, with ncu at 2^20 and 2^24. No new GPU
+results or performance conclusions accompany this implementation.

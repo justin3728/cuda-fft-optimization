@@ -255,6 +255,7 @@ __device__ void block_fft(cuDoubleComplex* shared, int length, int lanes, int lo
 }
 
 struct LegacyFFT {
+    static constexpr int io_mode = 0;
     template <typename V>
     __device__ static __forceinline__ void run(cuDoubleComplex* shared, int length, int lanes,
                                                int log_length, int log_lanes,
@@ -289,9 +290,10 @@ __device__ __forceinline__ void register_butterfly(cuDoubleComplex (&v)[R]) {
 
 template <int LogLength, int RadixBits>
 struct RegisterFFT {
+    static constexpr int io_mode = 0;
     // The host selects LogLength/RadixBits. The recursion forms the complete
     // stage plan at compile time, including the smaller final radix.
-    template <typename V, int Done = 0>
+    template <typename V, int Done = 0, int End = LogLength>
     __device__ static __forceinline__ void stage(cuDoubleComplex* shared, int lanes,
                                                  int log_lanes, RootTwiddles roots) {
         using Index = typename V::Index;
@@ -327,7 +329,7 @@ struct RegisterFFT {
         // enough, including threads processing several flat values. The same
         // single exchange allocation also serves global load/store layout.
         __syncthreads();
-        if constexpr (Done + bits < LogLength) { stage<V, Done + bits>(shared, lanes, log_lanes, roots); }
+        if constexpr (Done + bits < End) { stage<V, Done + bits, End>(shared, lanes, log_lanes, roots); }
     }
 
     template <typename V>
@@ -336,6 +338,153 @@ struct RegisterFFT {
         stage<V>(shared, lanes, log_lanes, roots);
     }
 };
+
+// New I/O paths only: the old kernels retain their runtime shape and loops.
+template <int LogLength, int Bits, int Lanes, int Mode>
+struct RegisterIO : RegisterFFT<LogLength, Bits> {
+    static constexpr int io_mode = Mode;
+    static constexpr int length = 1 << LogLength;
+    static constexpr int log_lanes = Lanes >= 8 ? 3 : Lanes >= 4 ? 2 : Lanes >= 2 ? 1 : 0;
+    static constexpr int first_bits = Mode == 2 ? Bits : 0;
+    static constexpr int first_radix = 1 << first_bits;
+    static constexpr int last_bits = Mode == 2 ? (LogLength - 1) % Bits + 1 : 0;
+    static constexpr int last_radix = 1 << last_bits;
+    static constexpr int last_done = LogLength - last_bits;
+    static constexpr int loads = (length * Lanes / first_radix + kThreads - 1) / kThreads;
+    static constexpr int stores = (length * Lanes / last_radix + kThreads - 1) / kThreads;
+
+    template <bool Columns>
+    __device__ static __forceinline__ int input_map(int group, int t, int& element, int& lane) {
+        const int flat = threadIdx.x + group * kThreads;
+        const int q = Columns ? flat / Lanes : flat % (length / first_radix);
+        lane = Columns ? flat % Lanes : flat / (length / first_radix);
+        if constexpr (Mode == 1) { element = q; }
+        else { element = q + reverse_index(t, first_bits) * (length / first_radix); }
+        return flat;
+    }
+
+    __device__ static __forceinline__ int output_map(int group, int t, int& element, int& lane) {
+        const int flat = threadIdx.x + group * kThreads;
+        lane = flat % Lanes;
+        element = flat / Lanes + t * (length / last_radix);
+        return flat;
+    }
+
+    template <bool Columns, typename V>
+    __device__ static __forceinline__ void execute(
+        const cuDoubleComplex* input, cuDoubleComplex* output, cuDoubleComplex* shared,
+        int other_length, const cuDoubleComplex* roots, int twiddle_mode,
+        size_t n = 0, size_t cross_base = 1, int log_cross_base = 0,
+        const cuDoubleComplex* cross_low = nullptr, const cuDoubleComplex* cross_high = nullptr,
+        const cuDoubleComplex* cross_full = nullptr, int cross_mode = 0) {
+        using Index = typename V::Index;
+        const int first = blockIdx.x * Lanes;
+        cuDoubleComplex v[loads][first_radix];
+        // Fully unrolled loads all precede shared stores, including staged roots.
+        #pragma unroll
+        for (int g = 0; g < loads; ++g) {
+            #pragma unroll
+            for (int t = 0; t < first_radix; ++t) {
+                int element, lane;
+                const int flat = input_map<Columns>(g, t, element, lane);
+                const int offset = Columns ? element * other_length + first + lane
+                                           : (first + lane) * length + element;
+                v[g][t] = flat < length * Lanes / first_radix && first + lane < other_length
+                    ? input[offset] : make_cuDoubleComplex(0.0, 0.0);
+            }
+        }
+        const RootTwiddles block_roots = stage_roots<V>(shared, length, Lanes, roots, twiddle_mode);
+        #pragma unroll
+        for (int g = 0; g < loads; ++g) {
+            if constexpr (Mode == 2) { register_butterfly(v[g]); }
+            #pragma unroll
+            for (int t = 0; t < first_radix; ++t) {
+                int element, lane;
+                const int flat = input_map<Columns>(g, t, element, lane);
+                // q is natural on load; shared uses the bit-reversed sub-FFT.
+                const int destination = Mode == 1 ? reverse_index(element, LogLength)
+                    : reverse_index(element % (length / first_radix), LogLength - first_bits) * first_radix + t;
+                if (flat < length * Lanes / first_radix) {
+                    shared[V::shared_index(Index(destination), Index(lane), Lanes)] = v[g][t];
+                }
+            }
+        }
+        __syncthreads();
+        if constexpr (Mode == 1) {
+            RegisterFFT<LogLength, Bits>::template run<V>(shared, length, Lanes, LogLength, log_lanes, block_roots);
+        } else if constexpr (Bits < last_done) {
+            RegisterFFT<LogLength, Bits>::template stage<V, Bits, last_done>(shared, Lanes, log_lanes, block_roots);
+        }
+        cuDoubleComplex result[stores][last_radix];
+        // Read the entire output register set before any global store.
+        #pragma unroll
+        for (int g = 0; g < stores; ++g) {
+            #pragma unroll
+            for (int t = 0; t < last_radix; ++t) {
+                int element, lane;
+                const int flat = output_map(g, t, element, lane);
+                result[g][t] = flat < length * Lanes / last_radix
+                    ? shared[V::shared_index(Index(element), Index(lane), Lanes)] : make_cuDoubleComplex(0.0, 0.0);
+                if constexpr (Mode == 2) {
+                    if (flat < length * Lanes / last_radix) {
+                        result[g][t] = mul(result[g][t], block_roots.read(
+                            reverse_index(t, last_bits) * (flat / Lanes)));
+                    }
+                }
+            }
+        }
+        #pragma unroll
+        for (int g = 0; g < stores; ++g) {
+            if constexpr (Mode == 2) { register_butterfly(result[g]); }
+            #pragma unroll
+            for (int t = 0; t < last_radix; ++t) {
+                int element, lane;
+                output_map(g, t, element, lane);
+                if constexpr (Columns) {
+                    if (first + lane < other_length) {
+                        const Index exponent = V::remainder(Index(first + lane) * Index(element), Index(n));
+                        const cuDoubleComplex cross = cross_mode == 1 ? read_twiddle(cross_full, exponent) : mul(
+                            read_twiddle(cross_high, V::quotient(exponent, Index(cross_base), log_cross_base)),
+                            read_twiddle(cross_low, V::remainder(exponent, Index(cross_base))));
+                        result[g][t] = mul(result[g][t], cross);
+                    }
+                }
+            }
+        }
+        #pragma unroll
+        for (int g = 0; g < stores; ++g) {
+            #pragma unroll
+            for (int t = 0; t < last_radix; ++t) {
+                int element, lane;
+                const int flat = output_map(g, t, element, lane);
+                if (flat < length * Lanes / last_radix && first + lane < other_length) {
+                    const int offset = Columns ? element * other_length + first + lane
+                                               : first + lane + other_length * element;
+                    output[offset] = result[g][t];
+                }
+            }
+        }
+    }
+};
+
+template <int L, int B, int Mode, int Width = 1, typename Action>
+void dispatch_io_width(int lanes, const Action& action) {
+    if (lanes == Width) { action(RegisterIO<L, B, Width, Mode>{}); return; }
+    // Do not generate oversized register arrays for shapes that cannot fit on
+    // either target (A100: 163 KiB opt-in, L4: 99 KiB). Includes all auto tiles.
+    if constexpr (Width < 8 && (Width + 1) * (1 << L) * sizeof(cuDoubleComplex) <= 163 * 1024) {
+        dispatch_io_width<L, B, Mode, Width + 1>(lanes, action);
+    } else {
+        throw std::runtime_error("fft2: register I/O requires lanes 1..8 and data tile <= 163 KiB");
+    }
+}
+
+template <int L, int B, typename Action>
+void dispatch_io(RegisterFFT<L, B> fft, int io, int lanes, const Action& action) {
+    if (io == 0) { action(fft); }
+    else if (io == 1) { dispatch_io_width<L, B, 1>(lanes, action); }
+    else { dispatch_io_width<L, B, 2>(lanes, action); }
+}
 
 template <int Bits, typename Action>
 void dispatch_register_fft(int log_length, const Action& action) {
@@ -350,13 +499,17 @@ void dispatch_register_fft(int log_length, const Action& action) {
 }
 
 template <typename Action>
-void dispatch_kernel(int mode, int padding, int lanes, int radix_mode, int log_length, const Action& action) {
+void dispatch_kernel(int mode, int padding, int lanes, int radix_mode, int log_length, int io, const Action& action) {
     dispatch_variant(mode, padding, lanes, [&](auto variant) {
         if (radix_mode == 0) { action(variant, LegacyFFT{}); }
         else if (radix_mode == 1) {
-            dispatch_register_fft<3>(log_length, [&](auto fft) { action(variant, fft); });
+            dispatch_register_fft<3>(log_length, [&](auto fft) {
+                dispatch_io(fft, io, lanes, [&](auto shape) { action(variant, shape); });
+            });
         } else {
-            dispatch_register_fft<4>(log_length, [&](auto fft) { action(variant, fft); });
+            dispatch_register_fft<4>(log_length, [&](auto fft) {
+                dispatch_io(fft, io, lanes, [&](auto shape) { action(variant, shape); });
+            });
         }
     });
 }
@@ -376,6 +529,11 @@ __global__ void pass1_columns(const cuDoubleComplex* __restrict__ input,
         return;  // Uniform for the whole block, before any barrier.
     }
     extern __shared__ cuDoubleComplex shared[];
+    if constexpr (FFT::io_mode != 0) {
+        FFT::template execute<true, V>(input + batch_index * n, workspace + batch_index * n, shared,
+            n2, roots, twiddle_mode, n, cross_base, log_cross_base, cross_low, cross_high, cross_full, cross_mode);
+        return;
+    }
     const RootTwiddles block_roots = stage_roots<V>(shared, n1, cols, roots, twiddle_mode);
     using Index = typename V::Index;
     const size_t base = batch_index * n;
@@ -420,6 +578,11 @@ __global__ void pass2_rows(const cuDoubleComplex* __restrict__ workspace,
         return;
     }
     extern __shared__ cuDoubleComplex shared[];
+    if constexpr (FFT::io_mode != 0) {
+        FFT::template execute<false, V>(workspace + batch_index * n, output + batch_index * n, shared,
+                                       n1, roots, twiddle_mode);
+        return;
+    }
     const RootTwiddles block_roots = stage_roots<V>(shared, n2, rows, roots, twiddle_mode);
     using Index = typename V::Index;
     const size_t base = batch_index * n;
@@ -471,6 +634,7 @@ struct Plan::Impl {
     int radix2;
     int twiddle_mode;
     int cross_mode;
+    int io_mode;
     int device = -1;
     size_t bytes;
     size_t shared1;
@@ -511,12 +675,16 @@ struct Plan::Impl {
         if (opts.cross_mode < 0 || opts.cross_mode > 1) {
             throw std::runtime_error("fft2: cross_mode must be 0 or 1");
         }
+        if (opts.io_mode < 0 || opts.io_mode > 2 || (opts.io_mode != 0 && opts.radix_mode == 0)) {
+            throw std::runtime_error("fft2: io_mode must be 0, 1 or 2; nonzero requires register radix");
+        }
         index_mode = opts.index_mode;
         smem_padding = opts.smem_padding;
         tile_policy = opts.tile_policy;
         radix_mode = opts.radix_mode;
         twiddle_mode = opts.twiddle_mode;
         cross_mode = opts.cross_mode;
+        io_mode = opts.io_mode;
         if (n > std::numeric_limits<size_t>::max() / static_cast<size_t>(batch)
             || n * static_cast<size_t>(batch) > std::numeric_limits<size_t>::max() / sizeof(cuDoubleComplex)) {
             throw std::runtime_error("fft2: N * batch byte count overflows size_t");
@@ -550,6 +718,10 @@ struct Plan::Impl {
         rows = choose_tile(n2, n1, opts.tile_rows, smem_padding, limit, "tile_rows", tile_policy, twiddle_mode);
         radix1 = detail::resolve_radix(radix_mode, n1, cols, kThreads);
         radix2 = detail::resolve_radix(radix_mode, n2, rows, kThreads);
+        if (io_mode != 0 && (cols > 8 || rows > 8
+            || shared_bytes(n1, cols, 0) > 163 * 1024 || shared_bytes(n2, rows, 0) > 163 * 1024)) {
+            throw std::runtime_error("fft2: register I/O requires lanes 1..8 and data tile <= 163 KiB");
+        }
         log_cols = integer_log2(static_cast<size_t>(cols));
         log_rows = integer_log2(static_cast<size_t>(rows));
         shared1 = shared_bytes(n1, cols, smem_padding, twiddle_mode);
@@ -577,12 +749,12 @@ struct Plan::Impl {
         if (limit > kDefaultSharedLimit) {
             // Set the full device limit, never a smaller plan's requirement:
             // constructing another plan must not invalidate an existing plan.
-            dispatch_kernel(index_mode, smem_padding, cols, radix1, log_n1, [&](auto variant, auto fft) {
+            dispatch_kernel(index_mode, smem_padding, cols, radix1, log_n1, io_mode, [&](auto variant, auto fft) {
                 check_cuda(cudaFuncSetAttribute(pass1_columns<decltype(variant), decltype(fft)>,
                                                cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
                            "opt in pass 1 dynamic shared memory");
             });
-            dispatch_kernel(index_mode, smem_padding, rows, radix2, log_n2, [&](auto variant, auto fft) {
+            dispatch_kernel(index_mode, smem_padding, rows, radix2, log_n2, io_mode, [&](auto variant, auto fft) {
                 check_cuda(cudaFuncSetAttribute(pass2_rows<decltype(variant), decltype(fft)>,
                                                cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
                            "opt in pass 2 dynamic shared memory");
@@ -616,14 +788,14 @@ void Plan::execute(const cuDoubleComplex* in, cuDoubleComplex* out, cudaStream_t
     if (device != p.device) {
         throw std::runtime_error("fft2: execute must use the plan's creation device");
     }
-    dispatch_kernel(p.index_mode, p.smem_padding, p.cols, p.radix1, p.log_n1, [&](auto variant, auto fft) {
+    dispatch_kernel(p.index_mode, p.smem_padding, p.cols, p.radix1, p.log_n1, p.io_mode, [&](auto variant, auto fft) {
         pass1_columns<decltype(variant), decltype(fft)><<<p.grid1, kThreads, p.shared1, stream>>>(
             in, p.workspace.data, p.n, p.batch, p.n1, p.n2, p.cols, p.log_n1, p.log_cols,
             p.cross_base, p.log_cross_base, p.roots1.data, p.cross_low.data, p.cross_high.data,
             p.cross_full.data, p.twiddle_mode, p.cross_mode);
         check_cuda(cudaGetLastError(), "launch pass 1 (columns)");
     });
-    dispatch_kernel(p.index_mode, p.smem_padding, p.rows, p.radix2, p.log_n2, [&](auto variant, auto fft) {
+    dispatch_kernel(p.index_mode, p.smem_padding, p.rows, p.radix2, p.log_n2, p.io_mode, [&](auto variant, auto fft) {
         pass2_rows<decltype(variant), decltype(fft)><<<p.grid2, kThreads, p.shared2, stream>>>(
             p.workspace.data, out, p.n, p.batch, p.n1, p.n2, p.rows, p.log_n2, p.log_rows,
             p.roots2.data, p.twiddle_mode);
@@ -645,12 +817,15 @@ std::string Plan::describe() const {
            << " tile_policy=" << p.tile_policy << " radix_mode=" << p.radix_mode;
     if (p.radix_mode == -1) { output << "(p1=" << p.radix1 << ",p2=" << p.radix2 << ")"; }
     output << " twiddle_mode=" << p.twiddle_mode << " cross_mode=" << p.cross_mode
+           << " io_mode=" << p.io_mode
            << " cross_table_bytes=" << p.cross_table_bytes
            << " C=" << p.cols << " R=" << p.rows << " workspace_bytes=" << p.bytes
            << " pass1{grid=(" << p.grid1.x << ',' << p.grid1.y << ',' << p.grid1.z
-           << "),block=(" << kThreads << ",1,1),lanes=" << p.cols << ",smem_bytes=" << p.shared1 << "}"
+           << "),block=(" << kThreads << ",1,1),lanes=" << p.cols << ",E=" << p.n1 * p.cols / kThreads
+           << ",smem_bytes=" << p.shared1 << "}"
            << " pass2{grid=(" << p.grid2.x << ',' << p.grid2.y << ',' << p.grid2.z
-           << "),block=(" << kThreads << ",1,1),lanes=" << p.rows << ",smem_bytes=" << p.shared2 << "}";
+           << "),block=(" << kThreads << ",1,1),lanes=" << p.rows << ",E=" << p.n2 * p.rows / kThreads
+           << ",smem_bytes=" << p.shared2 << "}";
     return output.str();
 }
 

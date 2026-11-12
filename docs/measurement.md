@@ -150,18 +150,28 @@ adapter through the three-line registry in `backend.hpp`.
   Planning, allocation and table upload stay outside timing/NVTX.
 
 Use `--impl fft2` (or `--impls fft2`) and `--fft2-n1 K --fft2-tile-cols C
---fft2-tile-rows R` in the binary or shell runners. Every tuning option defaults
-to 0, selecting the plan's device-dependent automatic policy. Requested values
-form the stable CSV/NVTX name, e.g. `fft2[n1=1024,c=8,r=4]`; out-of-place adds
-`,oop=1` before the closing bracket. Auto is `fft2[n1=0,c=0,r=0]`. Resolved
+--fft2-tile-rows R` in the binary or shell runners. These three options default
+to 0, selecting the plan's device-dependent automatic policy.
+`--fft2-index-mode M` accepts 0 (v1 size_t division) or 1 (u32 shift/mask);
+`--fft2-smem-padding P` accepts 0, 1 or 2 unused complex elements per shared
+row. Both default to 0 and are forwarded to every sweep worker and profile.
+Requested values form the stable CSV/NVTX name, e.g. `fft2[n1=1024,c=8,r=4]`.
+Nonzero index mode and padding append `,im=M` and `,pad=P`, in that order;
+out-of-place then adds `,oop=1` before the closing bracket. Zero values omit
+these suffixes, preserving existing labels such as `fft2[n1=0,c=0,r=0]`. Resolved
 N1/N2/C/R, launch dimensions, shared bytes and workspace bytes come from the
 unaltered `plan.describe()` and are recorded in `impl_detail`. The requested
 name stays consistent across sizes, including when auto resolves differently.
 
 ```bash
 scripts/run_sweep.sh --tag fft2_manual --impl fft2 --log2 20 --batch-modes b1 \
-  --fft2-n1 1024 --fft2-tile-cols 8 --fft2-tile-rows 4 --fft2-out-of-place
+  --fft2-n1 1024 --fft2-tile-cols 8 --fft2-tile-rows 4 \
+  --fft2-index-mode 1 --fft2-smem-padding 1 --fft2-out-of-place
 ```
+
+This example uses `fft2[n1=1024,c=8,r=4,im=1,pad=1,oop=1]`. Bash and the
+binary construct the same label so the escaped NVTX filter selects that range.
+These flags expose experiment choices; they make no performance claim.
 
 For out-of-place hot trials, the K executions read the same restored input
 and overwrite the same output; in-place hot trials repeatedly transform their
@@ -360,11 +370,14 @@ Each nonblank variant line contains `n1=K c=C r=R`. `#` begins a comment, and
 the final line may omit its newline. Optional `log2=20,21` selects sizes from
 the intersection with CLI `--log2`; optional `oop=0|1` chooses buffer mode.
 Without these fields a line uses all requested sizes and the CLI buffer mode
-(in-place by default). For example:
+(in-place by default). Optional `im=0|1` and `pad=0|1|2` select index mode and
+shared padding; each defaults to 0, so existing variant files keep their behavior.
+For example:
 
 ```text
 n1=0 c=0 r=0
 log2=20 n1=1024 c=4 r=4
+log2=20 n1=1024 c=4 r=4 im=1 pad=1
 log2=20 n1=1024 c=8 r=8 oop=1
 ```
 
@@ -377,14 +390,19 @@ use an auto-only file or reduce explicit tiles to fit the queried device limit.
 The default auto line adapts to both devices. The whole file's syntax, dimensions
 and duplicate configs are checked before commands execute; runtime plan creation
 checks device-specific tile limits. No file contents are evaluated as shell code.
+The duplicate key includes both `im` and `pad`: distinct choices can coexist,
+while omitted fields and explicit zeros identify the same configuration. Numeric
+values are normalized, including leading zeros.
 
 The runner accepts the common size/timing/profile options. The file owns N1/C/R
+and the index/padding choices (direct CLI tuning flags are rejected),
 and the baseline set is fixed; choose a subset of file lines/sizes for shorter
 jobs. Profiles use each line's intersection with `--profile-log2` and profile
 batch modes. An empty profile intersection still permits a sweep.
 
 All final artifacts are contained in `results/<tag>/`: `variants.csv` maps
-requested configs to `variants/v001/`, etc.; `variants/baseline/` and each worker
+requested configs to `variants/v001/`, etc., recording normalized `im` and `pad`
+alongside `n1,c,r,oop`; `variants/baseline/` and each worker
 retain raw CSVs, logs and profiler artifacts. Workers temporarily use unique
 `<tag>.baseline`/`<tag>.v001` tags, then move into that tree. Binary paths point
 to the shared `<tag>/build/`. `merge_variants.py` combines sweep rows and rebases

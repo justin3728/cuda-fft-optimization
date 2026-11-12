@@ -110,19 +110,63 @@ def printed_commands(stdout):
 def test_fft2_flags_reach_sweep_and_exact_nvtx_filters(bash):
     result = subprocess.run([bash, "scripts/run_t1_all.sh", "--tag", "fft2_flags_dry", "--dry-run", "--quick",
                              "--fft2-n1", "1024", "--fft2-tile-cols", "8", "--fft2-tile-rows", "4",
+                             "--fft2-index-mode", "1", "--fft2-smem-padding", "1",
                              "--fft2-out-of-place"], cwd=ROOT, text=True, capture_output=True, check=True)
     commands = printed_commands(result.stdout)
     sweep = next(cmd for cmd in commands if cmd[0].endswith("/fft_bench") and "--profile" not in cmd and "--export-vkfft" not in cmd and "--versions" not in cmd)
     assert sweep[sweep.index("--impls") + 1] == "legacy,cufft,vkfft,fft2"
-    for flag, value in [("--fft2-n1", "1024"), ("--fft2-tile-cols", "8"), ("--fft2-tile-rows", "4")]:
+    for flag, value in [("--fft2-n1", "1024"), ("--fft2-tile-cols", "8"), ("--fft2-tile-rows", "4"),
+                        ("--fft2-index-mode", "1"), ("--fft2-smem-padding", "1")]:
         assert sweep[sweep.index(flag) + 1] == value
     profiles = [cmd for cmd in commands if "--nvtx-include" in cmd and "--impls" in cmd
                 and cmd[cmd.index("--impls") + 1] == "fft2"]
     assert len(profiles) == 2  # cache all and none, one execution each
     for cmd in profiles:
         assert cmd[cmd.index("--launch-count") + 1] == "2"
-        assert cmd[cmd.index("--nvtx-include") + 1] == r"prof\/fft2\[n1=1024\,c=8\,r=4\,oop=1\]\/N1048576\/b1/"
+        assert cmd[cmd.index("--nvtx-include") + 1] == r"prof\/fft2\[n1=1024\,c=8\,r=4\,im=1\,pad=1\,oop=1\]\/N1048576\/b1/"
+        assert cmd[cmd.index("--fft2-index-mode") + 1] == "1"
+        assert cmd[cmd.index("--fft2-smem-padding") + 1] == "1"
         assert "--fft2-out-of-place" in cmd
+
+
+@pytest.mark.parametrize("n1,cols,rows,index_mode,padding,oop", [
+    (0, 0, 0, 0, 0, False),
+    (1024, 8, 4, 0, 0, True),
+    (1024, 4, 2, 1, 0, False),
+    (0, 0, 0, 0, 2, False),
+    (1024, 8, 4, 1, 1, True),
+    (256, 1, 2, 1, 2, False),
+])
+def test_fft2_shell_label_matches_cpp_format(bash, n1, cols, rows, index_mode, padding, oop):
+    # Mirror fft2_name() in bench/backends/backend.hpp, including optional-field order.
+    expected = f"fft2[n1={n1},c={cols},r={rows}"
+    if index_mode:
+        expected += f",im={index_mode}"
+    if padding:
+        expected += f",pad={padding}"
+    if oop:
+        expected += ",oop=1"
+    expected += "]"
+    args = ["--tag", "label_dry", "--fft2-n1", str(n1), "--fft2-tile-cols", str(cols),
+            "--fft2-tile-rows", str(rows), "--fft2-index-mode", f"0{index_mode}",
+            "--fft2-smem-padding", f"0{padding}"]
+    if oop:
+        args.append("--fft2-out-of-place")
+    result = subprocess.run([bash, "-c", 'source scripts/common.sh; t1_parse "$@"; t1_fft2_name',
+                             "label-test", *args], cwd=ROOT, text=True, capture_output=True, check=True)
+    assert result.stdout == expected
+
+
+@pytest.mark.parametrize("flag,value", [
+    ("--fft2-index-mode", "2"), ("--fft2-smem-padding", "3"),
+    ("--fft2-index-mode", "-1"), ("--fft2-smem-padding", "1,2"),
+    ("--fft2-index-mode", "999999999999999999999"),
+])
+def test_invalid_fft2_axes_fail_before_any_commands(bash, flag, value):
+    result = subprocess.run([bash, "scripts/run_t1_all.sh", "--tag", "bad_axis_dry", "--dry-run", flag, value],
+                            cwd=ROOT, text=True, capture_output=True)
+    assert result.returncode == 2
+    assert not printed_commands(result.stdout)
 
 
 @pytest.mark.parametrize("count", [1, 2, 3])

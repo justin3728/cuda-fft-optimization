@@ -23,8 +23,12 @@ std::unique_ptr<FftBackend> make_cufft();
 std::unique_ptr<FftBackend> make_vkfft(bool keep_code = false);
 std::unique_ptr<FftBackend> make_fft2(fft2::PlanOptions options = {}, bool out_of_place = false);
 inline std::string fft2_name(fft2::PlanOptions options, bool out_of_place = false) {
-    return "fft2[n1=" + std::to_string(options.n1) + ",c=" + std::to_string(options.tile_cols) +
-           ",r=" + std::to_string(options.tile_rows) + (out_of_place ? ",oop=1]" : "]");
+    std::string name = "fft2[n1=" + std::to_string(options.n1) + ",c=" + std::to_string(options.tile_cols) +
+                       ",r=" + std::to_string(options.tile_rows);
+    if (options.index_mode != 0) name += ",im=" + std::to_string(options.index_mode);
+    if (options.smem_padding != 0) name += ",pad=" + std::to_string(options.smem_padding);
+    if (out_of_place) name += ",oop=1";
+    return name + "]";
 }
 inline std::unique_ptr<FftBackend> backend(const std::string& name, bool keep_code = false,
                                          fft2::PlanOptions options = {}, bool out_of_place = false) {

@@ -116,11 +116,11 @@ struct Counts {
 
 struct Summary {
     Counts total;
-    Counts axes[2][3][2];
+    Counts axes[3][2][3][2];
 
     void add(Outcome result, fft2::PlanOptions options) {
         total.add(result);
-        axes[options.index_mode][options.smem_padding][options.tile_policy].add(result);
+        axes[options.radix_mode][options.index_mode][options.smem_padding][options.tile_policy].add(result);
     }
 };
 
@@ -136,6 +136,19 @@ std::vector<fft2::PlanOptions> variants_for(fft2::PlanOptions options, bool vari
             }
         }
     }
+    // Bound the L4 gate: test new radices against both tile policies with
+    // baseline indexing/padding, retaining all existing v1 axis combinations.
+    if (variants) {
+        options.index_mode = 0;
+        options.smem_padding = 0;
+        for (int radix : {1, 2}) {
+            for (int policy : {0, 1}) {
+                options.radix_mode = radix;
+                options.tile_policy = policy;
+                result.push_back(options);
+            }
+        }
+    }
     return result;
 }
 
@@ -144,7 +157,7 @@ std::string config_label(size_t n, int batch, fft2::PlanOptions options) {
     label << "N=" << n << " batch=" << batch << " requested_N1=" << options.n1
           << " requested_C=" << options.tile_cols << " requested_R=" << options.tile_rows
           << " index_mode=" << options.index_mode << " smem_padding=" << options.smem_padding
-          << " tile_policy=" << options.tile_policy;
+          << " tile_policy=" << options.tile_policy << " radix_mode=" << options.radix_mode;
     return label.str();
 }
 
@@ -246,7 +259,8 @@ void run_config(size_t n, int batch, size_t cap, size_t host_cap, size_t shared_
                            "restore input for in-place FFT");
                 plan.execute(output.complex_data(), output.complex_data(), stream.value);
                 const Error in_place = compare(output.complex_data(), reference, stream.value);
-                const bool passed = out_of_place.relative_l2 <= kTolerance && in_place.relative_l2 <= kTolerance;
+                const long double tolerance = options.radix_mode == 0 ? kTolerance : 1e-14L;
+                const bool passed = out_of_place.relative_l2 <= tolerance && in_place.relative_l2 <= tolerance;
                 std::cout << config_label(n, batch, options) << " " << plan.describe()
                           << " oop_rel_l2=" << out_of_place.relative_l2 << " oop_max_abs=" << out_of_place.max_absolute
                           << " inplace_rel_l2=" << in_place.relative_l2 << " inplace_max_abs=" << in_place.max_absolute
@@ -297,6 +311,10 @@ bool api_checks() {
             expect_error([policy] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, policy}); },
                          "invalid tile policy");
         }
+        for (int radix : {-1, 3}) {
+            expect_error([radix] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, 0, radix}); },
+                         "invalid radix mode");
+        }
         fft2::Plan plan(size_t{1} << 16, 1);
         expect_error([&plan] { plan.execute(nullptr, nullptr, nullptr); }, "null input/output");
         std::cout << "API checks PASS\n";
@@ -339,6 +357,7 @@ int main(int argc, char** argv) {
             } else if (argument == "--help") {
                 std::cout << "usage: fft2_test [--variants] [--describe] [--max-device-mib 6144] [--max-host-mib 2048]\n"
                           << "--variants tests index_mode={0,1} x smem_padding={0,1,2} x tile_policy={0,1},"
+                          << " plus radix_mode={1,2} x tile_policy={0,1} at index_mode=smem_padding=0,"
                           << " where shared memory fits.\n"
                           << "--describe prints batch=1 plans for every N, without executing FFTs.\n";
                 return 0;
@@ -392,16 +411,14 @@ int main(int argc, char** argv) {
                        variants, summary, options);
         }
         bool all_axes_executed = true;
-        for (int mode = 0; mode <= (variants ? 1 : 0); ++mode) {
-            for (int padding = 0; padding <= (variants ? 2 : 0); ++padding) {
-                for (int policy = 0; policy <= (variants ? 1 : 0); ++policy) {
-                    const Counts& axis = summary.axes[mode][padding][policy];
-                    std::cout << "VARIANT_SUMMARY index_mode=" << mode << " smem_padding=" << padding
-                              << " tile_policy=" << policy << " passed=" << axis.passed
-                              << " failed=" << axis.failed << " skipped=" << axis.skipped << '\n';
-                    all_axes_executed = all_axes_executed && axis.passed != 0;
-                }
-            }
+        for (const auto options : variants_for({}, variants)) {
+            const Counts& axis = summary.axes[options.radix_mode][options.index_mode]
+                                             [options.smem_padding][options.tile_policy];
+            std::cout << "VARIANT_SUMMARY index_mode=" << options.index_mode
+                      << " smem_padding=" << options.smem_padding << " tile_policy=" << options.tile_policy
+                      << " radix_mode=" << options.radix_mode << " passed=" << axis.passed
+                      << " failed=" << axis.failed << " skipped=" << axis.skipped << '\n';
+            all_axes_executed = all_axes_executed && axis.passed != 0;
         }
         std::cout << "SUMMARY passed=" << summary.total.passed << " failed=" << summary.total.failed
                   << " skipped=" << summary.total.skipped

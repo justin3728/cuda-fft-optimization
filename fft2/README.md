@@ -12,6 +12,17 @@ is claimed.** The variant GPU gate below must be run by Claude, on L4 first;
 H9/H10 need a separate A100 measurement before any default changes.
 The T4t tile-policy change has CPU-model validation only; its CUDA builds
 and GPU correctness gate remain pending.
+T4b adds opt-in register radix-8/16 paths. Its NumPy stage/index-map checks
+are CPU evidence only; CUDA builds, ptxas resources, accuracy vs cuFFT, and
+GPU gate duration remain pending in this compiler-free dispatch environment.
+Local T4b validation (NumPy 2.3.5): 912 direct Python test-function checks
+passed, with the eight opt-in slow cases skipped, in 61.44 s. Because pytest
+is absent, an ignored local adapter expanded the existing pytest parameters
+and ran the assertions/expected-error checks; this is not a pytest or full
+`make test-cpu` gate result. Four default-model cases matched HEAD byte for
+byte, and the original CUDA `block_fft` source was unchanged. Python bytecode
+compilation and `git diff --check` also passed. Neither make nor a C++/CUDA
+compiler is available here, so the host planner binary was not tested.
 
 ## Build and gates
 
@@ -48,9 +59,12 @@ relative L2 error above `1e-12`, API-check failure, or zero executed
 configurations causes a nonzero exit status. `--describe` only prints the nine
 default batch-1 plan descriptions and a summary; it does not execute FFTs.
 
-`--variants` runs that same full list of 29 configurations for every
+`--variants` runs that same full list of 29 configurations for every v1
 `index_mode` in `{0,1}`, `smem_padding` in `{0,1,2}` and `tile_policy` in
-`{0,1}`: 348 configuration outcomes, including explicit skips. Each line
+`{0,1}`, plus `radix_mode` in `{1,2}` crossed with `tile_policy` in `{0,1}`
+at `index_mode=0, smem_padding=0`: 464 configuration outcomes, including
+explicit skips. New radix paths must meet `1e-14` relative L2 vs cuFFT for
+both out-of-place and in-place execution; v1 keeps its `1e-12` gate. Each line
 identifies all axes, the requested split/tiles, and either the actual plan/errors
 or the skip/failure reason. Per-axis summaries and a final total follow. Any failure, API failure,
 or axis with no passing configurations makes the exit status nonzero. Shared
@@ -63,7 +77,7 @@ To keep the L4 gate bounded, variants share one random input and one cuFFT
 reference per configuration, use one fft2 plan at a time, and execute only one
 out-of-place plus one in-place transform per variant. The input stays intact;
 a device copy restores the output buffer before the in-place test. The target
-is under approximately three minutes on L4; elapsed GPU test time still needs
+is under approximately five minutes on L4; elapsed GPU test time still needs
 to be checked there. `--variants --describe` describes all feasible default
 batch-1 variant plans and lists the infeasible combinations without FFTs.
 
@@ -147,6 +161,7 @@ fft2::PlanOptions options;
 options.index_mode = 1;    // H9: u32 shift/mask for power-of-two divisors
 options.smem_padding = 1;  // H10: one unused complex element per element-row
 options.tile_policy = 1;   // H13: 32 KiB target, at least two automatic lanes
+options.radix_mode = 1;    // H11: register radix-8 (2 selects radix-16)
 fft2::Plan candidate(size_t{1} << 20, 3, options);
 std::cout << candidate.describe() << '\n';
 candidate.execute(device_input, device_output, stream);
@@ -157,6 +172,61 @@ candidate.execute(device_input, device_output, stream);
 | `index_mode` | `0` (default), `1` | **H9:** replacing runtime 64-bit division/remainder with u32 shift/mask may reduce integer instruction overhead. Mode 1 uses u32 for block-local indices and offsets within one transform, including cross-table indexing; the batch base/global address stays 64-bit. |
 | `smem_padding` | `0` (default), `1`, `2` | **H10:** changing the shared row stride from `lanes` to `lanes+padding` may reduce shared-memory bank conflicts. Each padding unit is one unused FP64 complex element per element-row, so allocation is `length*(lanes+padding)*16` bytes. |
 | `tile_policy` | `0` (default), `1` | **H13:** policy 0 keeps v1's largest fitting power-of-two width up to 8. Policy 1 chooses the largest power-of-two width bounded by the other dimension and 32 KiB (including padding), with at least two lanes; if two lanes exceed the device limit, it uses policy 0's choice. Explicit C/R override either policy independently. |
+| `radix_mode` | `0` (default), `1`, `2` | **H11:** keep v1, fuse radix-8 in registers, or fuse radix-16 in registers. Internal roots are constexpr; external twiddles use the existing length-L table. |
+
+The host dispatches the length and radix as template parameters; all stage
+sizes and internal butterfly loops are compile-time choices. The stage radices
+for each length are:
+
+| L | radix_mode=1 | radix_mode=2 |
+|---:|---|---|
+| 256 | 8, 8, 4 | 16, 16 |
+| 512 | 8, 8, 8 | 16, 16, 2 |
+| 1024 | 8, 8, 8, 2 | 16, 16, 4 |
+| 2048 | 8, 8, 8, 4 | 16, 16, 8 |
+| 4096 | 8, 8, 8, 8 | 16, 16, 16 |
+
+Each thread owns butterfly `flat = threadIdx.x + iteration*256`, splits it
+into `butterfly = flat/lanes` and `lane = flat%lanes`, and holds R complex
+values in registers. With `previous` equal to the product of earlier radices,
+`span = previous*R`, and `j = butterfly%previous`, register t loads and stores
+element `(butterfly/previous)*span + j + t*previous` at shared offset
+`element*(lanes+padding) + lane`. Globally bit-reversed input requires external
+twiddle exponent `reverse_bits(t)*j*(L/span)` before the internal DIT butterfly.
+`reference.staged_index_map()` models these exact thread, iteration, element,
+shared-offset, and twiddle-exponent maps.
+
+Registers hold the data across every internal radix-2 stage. Only fused-stage
+boundaries use shared memory and a block barrier; independent butterflies
+read/write disjoint sets, including when a thread processes multiple sets.
+One `L*(lanes+padding)*16` exchange buffer is reused throughout, also serving
+the global load/store permutation. There is no second shared buffer or new
+twiddle table. For L=1024 radix-8 has three inter-stage exchanges and radix-16
+has two; both also use the existing input/output layout staging. Allocation
+sizes and tile selection therefore stay the same as v1. `radix_mode=0` calls
+the original butterfly without changing its floating-point order.
+
+The CPU tests cover all ten length/stage plans, both index modes, all padding
+values, 1/2/3/8 lanes (including multiple butterflies per thread), and complete
+batched transforms with partial 3/5-lane tiles. The new GPU gate uses baseline
+indexing/padding to keep its runtime bounded; those axes remain usable with
+either register radix and are covered by the CPU model.
+
+Before acceptance, collect the actual per-kernel registers, stack bytes, spill
+stores and spill loads for both passes and every instantiated `KernelVariant`
+and `RegisterFFT<LogLength,RadixBits>` (including v1 for comparison):
+
+```bash
+make -B -C fft2 CUDA_ARCH=sm_80 NVCCFLAGS='-O3 -std=c++17 -Xptxas=-v'
+make -B -C fft2 CUDA_ARCH=sm_89
+make -C fft2 test-cpu
+fft2/fft2_test --variants
+```
+
+Registers/spills are **unmeasured here** because nvcc is unavailable. The
+director must attach ptxas output, confirm register arrays scalarize without
+unexpected local-memory traffic, and run the L4 gate before the A100 A/B with
+T4t/T2c. No resource count or performance result is inferred from the model.
 
 Each kernel is specialized at compile time for index mode and padding.
 Dispatch happens on the host once per launch; there are no mode/padding branches in hot loops.
@@ -198,7 +268,7 @@ A100 batch-1/batched A/B remain required; policy 0 stays the default.
 To accept/reject these hypotheses, Claude must measure on **A100-SXM4-40GB**:
 
 1. First run the full variant correctness gate, and record wall time on L4
-   against the approximately three-minute target. On A100 record N, batch,
+   against the approximately five-minute target. On A100 record N, batch,
    split, actual C/R, padding, shared bytes, and the two-kernel launch trace.
    Use the same input, build flags, clock policy (`--clock-control none`),
    and explicit cache policy for every pair.

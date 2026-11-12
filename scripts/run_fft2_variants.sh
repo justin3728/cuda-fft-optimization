@@ -12,19 +12,24 @@ while (($#)); do
             (($# >= 2)) || { echo 'Missing --variants file' >&2; exit 2; }
             variants_file=$2; shift 2;;
         --ncu) with_ncu=1; shift;;
-        --impl|--impls|--fft2-n1|--fft2-tile-cols|--fft2-tile-rows|--skip-copy-profiles)
+        --impl|--impls|--fft2-n1|--fft2-tile-cols|--fft2-tile-rows|--fft2-index-mode|--fft2-smem-padding|--skip-copy-profiles)
             echo 'Choose variant tuning in FILE; the runner always includes all three baselines.' >&2; exit 2;;
         --help|-h)
             echo 'Usage: scripts/run_fft2_variants.sh --tag NEW_TAG [--variants FILE] [--ncu] [--dry-run]'
             echo 'Common sweep/profile options are accepted. Default: scripts/fft2_variants_default.txt.'
-            echo 'Lines: n1=K c=C r=R [log2=16,17,...] [oop=0|1]; 0 = auto; # starts a comment.'
+            echo 'Lines: n1=K c=C r=R [log2=16,17,...] [oop=0|1] [im=0|1] [pad=0|1|2]; # starts a comment.'
+            echo 'n1/c/r: 0 = auto; im/pad: default 0.'
             exit 0;;
         *) common_args+=("$1"); shift;;
     esac
 done
 t1_parse "${common_args[@]}"
 ((with_ncu == 0 || skip_ncu == 0)) || { echo 'Choose --ncu or --skip-ncu' >&2; exit 2; }
-[[ $variants_file == /* ]] || variants_file="$invocation_dir/$variants_file"
+case $variants_file in
+    /*) ;;
+    [[:alpha:]]:[\\/]*) variants_file=${variants_file//\\//};;
+    *) variants_file="$invocation_dir/$variants_file";;
+esac
 [[ -r $variants_file ]] || { echo "Cannot read variants: $variants_file" >&2; exit 2; }
 exponents=$(t1_exponents "$log2")
 log2=${exponents//$'\n'/,}
@@ -36,6 +41,7 @@ done <<< "$exponents"
 
 # Validate the whole file, intersections and duplicate configs before any GPU work.
 variant_n1=() variant_cols=() variant_rows=() variant_oop=() variant_sizes=() variant_tags=()
+variant_index_mode=() variant_smem_padding=()
 declare -A used_configs=()
 line_number=0
 while IFS= read -r line || [[ -n $line ]]; do
@@ -45,7 +51,7 @@ while IFS= read -r line || [[ -n $line ]]; do
     read -r -a fields <<< "$line"
     declare -A parsed=()
     for field in "${fields[@]}"; do
-        [[ $field =~ ^(n1|c|r|oop|log2)=([0-9,]+)$ ]] || {
+        [[ $field =~ ^(n1|c|r|oop|im|pad|log2)=([0-9,]+)$ ]] || {
             echo "Invalid variant field on line $line_number: $field" >&2; exit 2;
         }
         key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
@@ -63,6 +69,9 @@ while IFS= read -r line || [[ -n $line ]]; do
     }
     oop=${parsed[oop]:-$fft2_out_of_place}
     ((oop == 0 || oop == 1)) || { echo "oop must be 0 or 1 on line $line_number" >&2; exit 2; }
+    index_mode=${parsed[im]:-0} smem_padding=${parsed[pad]:-0}
+    ((index_mode <= 1)) || { echo "im must be 0 or 1 on line $line_number" >&2; exit 2; }
+    ((smem_padding <= 2)) || { echo "pad must be 0, 1 or 2 on line $line_number" >&2; exit 2; }
     selected=''
     selector=$(t1_exponents "${parsed[log2]:-$log2}")
     while read -r exponent; do
@@ -75,7 +84,7 @@ while IFS= read -r line || [[ -n $line ]]; do
                  split_n2 < 256 || split_n2 > 4096)); then
                 echo "Invalid N1/N2 split for log2=$exponent on line $line_number" >&2; exit 2;
             fi
-            key="$exponent/${parsed[n1]}/${parsed[c]}/${parsed[r]}/$oop"
+            key="$exponent/${parsed[n1]}/${parsed[c]}/${parsed[r]}/$oop/$index_mode/$smem_padding"
             [[ -z ${used_configs[$key]:-} ]] || { echo "Duplicate variant config on line $line_number" >&2; exit 2; }
             used_configs[$key]=1
             selected+="${selected:+,}$exponent"
@@ -84,6 +93,7 @@ while IFS= read -r line || [[ -n $line ]]; do
     [[ -n $selected ]] || continue
     variant_n1+=("${parsed[n1]}"); variant_cols+=("${parsed[c]}"); variant_rows+=("${parsed[r]}")
     variant_oop+=("$oop"); variant_sizes+=("$selected")
+    variant_index_mode+=("$index_mode"); variant_smem_padding+=("$smem_padding")
     printf -v worker_tag '%s.v%03d' "$tag" "${#variant_n1[@]}"
     variant_tags+=("$worker_tag")
 done < "$variants_file"
@@ -95,10 +105,11 @@ failed=0
 run_step() { if t1_run "$@"; then return 0; else failed=1; fi; }
 if ((dry_run == 0)); then
     mkdir -p "$out"
-    printf 'tag,path,log2,n1,c,r,oop\n' > "$out/variants.csv"
+    printf 'tag,path,log2,n1,c,r,oop,im,pad\n' > "$out/variants.csv"
     for i in "${!variant_tags[@]}"; do
         t1_csv_row "${variant_tags[i]}" "variants/${variant_tags[i]##*.}" "${variant_sizes[i]}" "${variant_n1[i]}" \
-            "${variant_cols[i]}" "${variant_rows[i]}" "${variant_oop[i]}" >> "$out/variants.csv"
+            "${variant_cols[i]}" "${variant_rows[i]}" "${variant_oop[i]}" \
+            "${variant_index_mode[i]}" "${variant_smem_padding[i]}" >> "$out/variants.csv"
     done
 fi
 run_args=(--log2 "$log2" --batch-modes "$batch_modes" --trials "$trials" --iters "$iters"
@@ -122,7 +133,8 @@ run_step mv -- "results/$tag.baseline" "$out/variants/baseline"
 for i in "${!variant_tags[@]}"; do
     args=(--tag "${variant_tags[i]}" --log2 "${variant_sizes[i]}" --batch-modes "$batch_modes"
           --trials "$trials" --iters "$iters" --impls fft2 --fft2-n1 "${variant_n1[i]}"
-          --fft2-tile-cols "${variant_cols[i]}" --fft2-tile-rows "${variant_rows[i]}")
+          --fft2-tile-cols "${variant_cols[i]}" --fft2-tile-rows "${variant_rows[i]}"
+          --fft2-index-mode "${variant_index_mode[i]}" --fft2-smem-padding "${variant_smem_padding[i]}")
     ((variant_oop[i] == 0)) || args+=(--fft2-out-of-place)
     ((verify_fftw == 0)) || args+=(--verify-fftw)
     run_step "${workers[@]}" scripts/run_sweep.sh "${args[@]}"

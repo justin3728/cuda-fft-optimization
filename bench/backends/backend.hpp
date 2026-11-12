@@ -29,6 +29,8 @@ inline std::string fft2_name(fft2::PlanOptions options, bool out_of_place = fals
     if (options.smem_padding != 0) name += ",pad=" + std::to_string(options.smem_padding);
     if (options.tile_policy != 0) name += ",tp=" + std::to_string(options.tile_policy);
     if (options.radix_mode != 0) name += ",rx=" + std::to_string(options.radix_mode);
+    if (options.twiddle_mode != 0) name += ",tw=" + std::to_string(options.twiddle_mode);
+    if (options.cross_mode != 0) name += ",cx=" + std::to_string(options.cross_mode);
     if (out_of_place) name += ",oop=1";
     return name + "]";
 }

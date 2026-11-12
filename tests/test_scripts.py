@@ -278,3 +278,33 @@ exit 1
     assert "sudo -E" in result.stderr
     assert "NVreg_RestrictProfilingToAdminUsers=0" in result.stderr
     assert read_csv(tmp_path / "results/permission/ncu/index.csv")[0]["status"] == "permission_error"
+
+
+@pytest.mark.parametrize("tw,cx", [(0, 0), (1, 0), (0, 1), (1, 1)])
+def test_twiddle_cross_labels_and_forwarding(bash, tw, cx):
+    args = ["--tag", "twcx_dry", "--fft2-twiddle-mode", f"0{tw}",
+            "--fft2-cross-mode", f"0{cx}", "--fft2-radix-mode", "2", "--fft2-out-of-place"]
+    expected = "fft2[n1=0,c=0,r=0,rx=2"
+    if tw:
+        expected += ",tw=1"
+    if cx:
+        expected += ",cx=1"
+    expected += ",oop=1]"
+    result = subprocess.run([bash, "-c", 'source scripts/common.sh; t1_parse "$@"; t1_fft2_name',
+                             "test", *args], cwd=ROOT, text=True, capture_output=True, check=True)
+    assert result.stdout == expected
+    result = subprocess.run([bash, "scripts/run_t1_all.sh", *args, "--quick", "--dry-run"],
+                            cwd=ROOT, text=True, capture_output=True, check=True)
+    commands = printed_commands(result.stdout)
+    benches = [cmd for cmd in commands if "--impls" in cmd and
+               ("--profile" in cmd or any(part.endswith("/fft_bench") for part in cmd))]
+    assert benches
+    for cmd in benches:
+        assert cmd[cmd.index("--fft2-twiddle-mode") + 1] == str(tw)
+        assert cmd[cmd.index("--fft2-cross-mode") + 1] == str(cx)
+
+
+@pytest.mark.parametrize("flag", ["--fft2-twiddle-mode", "--fft2-cross-mode"])
+@pytest.mark.parametrize("value", ["2", "-1", "1,0", "99999999999999999999"])
+def test_invalid_twiddle_cross_flags(bash, flag, value):
+    test_invalid_fft2_axes_fail_before_any_commands(bash, flag, value)

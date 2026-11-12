@@ -19,11 +19,13 @@ fft2::PlanOptions fft2_options(const Options& opts) {
     fft2::PlanOptions options{opts.nonnegative_integer("--fft2-n1"), opts.nonnegative_integer("--fft2-tile-cols"),
                               opts.nonnegative_integer("--fft2-tile-rows"),
                               opts.nonnegative_integer("--fft2-index-mode"), opts.nonnegative_integer("--fft2-smem-padding"),
-                              opts.nonnegative_integer("--fft2-tile-policy"), opts.nonnegative_integer("--fft2-radix-mode")};
+                              opts.nonnegative_integer("--fft2-tile-policy"), opts.nonnegative_integer("--fft2-radix-mode"), opts.nonnegative_integer("--fft2-twiddle-mode"), opts.nonnegative_integer("--fft2-cross-mode")};
     if (options.index_mode > 1) throw std::runtime_error("--fft2-index-mode must be 0 or 1");
     if (options.smem_padding > 2) throw std::runtime_error("--fft2-smem-padding must be 0, 1 or 2");
     if (options.tile_policy > 1) throw std::runtime_error("--fft2-tile-policy must be 0 or 1");
     if (options.radix_mode > 2) throw std::runtime_error("--fft2-radix-mode must be 0, 1 or 2");
+    if (options.twiddle_mode > 1) throw std::runtime_error("--fft2-twiddle-mode must be 0 or 1");
+    if (options.cross_mode > 1) throw std::runtime_error("--fft2-cross-mode must be 0 or 1");
     return options;
 }
 std::string config_id(const std::string& impl, const Config& cfg) {
@@ -140,7 +142,7 @@ int sweep(const Options& opts, const std::vector<Config>& cfgs, const std::vecto
             "--threshold", opts.get("--threshold", "1e-12")};
         if (opts.has("--verify-fftw")) args.push_back("--verify-fftw");
         for (const auto* key : {"--fft2-n1", "--fft2-tile-cols", "--fft2-tile-rows",
-                                "--fft2-index-mode", "--fft2-smem-padding", "--fft2-tile-policy", "--fft2-radix-mode"}) {
+                                "--fft2-index-mode", "--fft2-smem-padding", "--fft2-tile-policy", "--fft2-twiddle-mode", "--fft2-cross-mode", "--fft2-radix-mode"}) {
             if (opts.has(key)) { args.push_back(key); args.push_back(opts.get(key)); }
         }
         if (opts.has("--fft2-out-of-place")) args.push_back("--fft2-out-of-place");
@@ -178,13 +180,14 @@ int main(int argc, char** argv) {
     try {
         Options opts(argc, argv, {"--worker", "--profile", "--export-vkfft", "--versions", "--verify-fftw", "--fft2-out-of-place", "--help"},
                      {"--tag", "--n", "--log2", "--batch", "--batch-modes", "--impl", "--impls", "--trials", "--iters", "--warmup", "--threshold",
-                      "--fft2-n1", "--fft2-tile-cols", "--fft2-tile-rows", "--fft2-index-mode", "--fft2-smem-padding", "--fft2-tile-policy", "--fft2-radix-mode"});
+                      "--fft2-n1", "--fft2-tile-cols", "--fft2-tile-rows", "--fft2-index-mode", "--fft2-smem-padding", "--fft2-tile-policy", "--fft2-twiddle-mode", "--fft2-cross-mode", "--fft2-radix-mode"});
         if (opts.has("--help")) {
             std::cout << "fft_bench --tag TAG [--log2 16,...,24] [--batch-modes b1,b8,t25] [--impls legacy,cufft,vkfft,fft2]\n"
                          "  [--trials 15] [--iters 20] [--warmup 3] [--threshold 1e-12] [--verify-fftw]\n"
                          "  [--impl fft2] [--fft2-n1 0] [--fft2-tile-cols 0] [--fft2-tile-rows 0] [--fft2-out-of-place]\n"
                          "  [--fft2-index-mode 0|1] [--fft2-smem-padding 0|1|2] (default: 0)\n"
                          "  [--fft2-tile-policy 0|1] [--fft2-radix-mode 0|1|2] (default: 0)\n"
+                         "  [--fft2-twiddle-mode 0|1] [--fft2-cross-mode 0|1] (default: 0)\n"
                          "  --profile | --export-vkfft: requires exactly one --n, --batch and --impls config\n";
             return 0;
         }

@@ -210,3 +210,21 @@ def test_distinct_twiddle_cross_configs(bash, tmp_path):
         assert [(cmd[cmd.index("--fft2-twiddle-mode") + 1],
                  cmd[cmd.index("--fft2-cross-mode") + 1]) for cmd in commands] == [
                      (str(tw), str(cx)) for tw, cx in pairs]
+
+
+def test_auto_radix_variant_preserves_v1_and_forwards_auto(bash, tmp_path):
+    variants = tmp_path / "auto.txt"
+    variants.write_text("n1=0 c=0 r=0\nn1=0 c=0 r=0 tp=1 rx=-1 tw=1 cx=1 oop=1\n")
+    result = subprocess.run([bash, "scripts/run_fft2_variants.sh", "--tag", "auto_dry",
+                             "--variants", str(variants), "--log2", "20", "--profile-log2", "20",
+                             "--dry-run", "--ncu"], cwd=ROOT, text=True, capture_output=True, check=True)
+    for script in ["scripts/run_sweep.sh", "scripts/run_ncu.sh"]:
+        commands = [cmd for cmd in printed_commands(result.stdout) if script in cmd
+                    and cmd[cmd.index("--impls") + 1] == "fft2"]
+        assert [(cmd[cmd.index("--fft2-tile-policy") + 1],
+                 cmd[cmd.index("--fft2-radix-mode") + 1]) for cmd in commands] == [("0", "0"), ("1", "-1")]
+
+
+@pytest.mark.parametrize("value", ["-2", "-01", "auto", "-1,2", "-1 rx=-1"])
+def test_invalid_auto_radix_fields(bash, tmp_path, value):
+    test_bad_variant_files_fail_before_running_any_commands(bash, tmp_path, "n1=0 c=0 r=0 rx=" + value)

@@ -16,14 +16,17 @@ namespace {
 constexpr const char* header = "impl,N,log2N,batch,batch_mode,timing_mode,trials,iters_per_trial,time_ms_median,time_ms_min,time_ms_p10,time_ms_p90,rel_l2_err,max_abs_err,status,note,impl_detail\n";
 const std::vector<std::string> modes = {"hot", "cold"};
 fft2::PlanOptions fft2_options(const Options& opts) {
+    // Pin bench defaults to explicit v1, independently of PlanOptions defaults.
     fft2::PlanOptions options{opts.nonnegative_integer("--fft2-n1"), opts.nonnegative_integer("--fft2-tile-cols"),
                               opts.nonnegative_integer("--fft2-tile-rows"),
                               opts.nonnegative_integer("--fft2-index-mode"), opts.nonnegative_integer("--fft2-smem-padding"),
-                              opts.nonnegative_integer("--fft2-tile-policy"), opts.nonnegative_integer("--fft2-radix-mode"), opts.nonnegative_integer("--fft2-twiddle-mode"), opts.nonnegative_integer("--fft2-cross-mode")};
+                              opts.nonnegative_integer("--fft2-tile-policy"),
+                              opts.get("--fft2-radix-mode", "0") == "-1" ? -1 : opts.nonnegative_integer("--fft2-radix-mode"),
+                              opts.nonnegative_integer("--fft2-twiddle-mode"), opts.nonnegative_integer("--fft2-cross-mode")};
     if (options.index_mode > 1) throw std::runtime_error("--fft2-index-mode must be 0 or 1");
     if (options.smem_padding > 2) throw std::runtime_error("--fft2-smem-padding must be 0, 1 or 2");
     if (options.tile_policy > 1) throw std::runtime_error("--fft2-tile-policy must be 0 or 1");
-    if (options.radix_mode > 2) throw std::runtime_error("--fft2-radix-mode must be 0, 1 or 2");
+    if (options.radix_mode > 2) throw std::runtime_error("--fft2-radix-mode must be -1, 0, 1 or 2");
     if (options.twiddle_mode > 1) throw std::runtime_error("--fft2-twiddle-mode must be 0 or 1");
     if (options.cross_mode > 1) throw std::runtime_error("--fft2-cross-mode must be 0 or 1");
     return options;
@@ -186,7 +189,7 @@ int main(int argc, char** argv) {
                          "  [--trials 15] [--iters 20] [--warmup 3] [--threshold 1e-12] [--verify-fftw]\n"
                          "  [--impl fft2] [--fft2-n1 0] [--fft2-tile-cols 0] [--fft2-tile-rows 0] [--fft2-out-of-place]\n"
                          "  [--fft2-index-mode 0|1] [--fft2-smem-padding 0|1|2] (default: 0)\n"
-                         "  [--fft2-tile-policy 0|1] [--fft2-radix-mode 0|1|2] (default: 0)\n"
+                         "  [--fft2-tile-policy 0|1] [--fft2-radix-mode -1|0|1|2] (default: 0; -1 = auto radix)\n"
                          "  [--fft2-twiddle-mode 0|1] [--fft2-cross-mode 0|1] (default: 0)\n"
                          "  --profile | --export-vkfft: requires exactly one --n, --batch and --impls config\n";
             return 0;

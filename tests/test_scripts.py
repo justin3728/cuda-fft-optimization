@@ -309,3 +309,20 @@ def test_twiddle_cross_labels_and_forwarding(bash, tw, cx):
 @pytest.mark.parametrize("value", ["2", "-1", "1,0", "99999999999999999999"])
 def test_invalid_twiddle_cross_flags(bash, flag, value):
     test_invalid_fft2_axes_fail_before_any_commands(bash, flag, value)
+
+
+@pytest.mark.parametrize("radix,label", [("0", ""), ("01", ",rx=1"), ("2", ",rx=2"), ("-1", ",rx=auto")])
+def test_auto_radix_label_order_and_forwarding(bash, radix, label):
+    args = ["--tag", "auto_radix_dry", "--fft2-tile-policy", "1", "--fft2-radix-mode", radix,
+            "--fft2-twiddle-mode", "1", "--fft2-cross-mode", "1", "--fft2-out-of-place"]
+    result = subprocess.run([bash, "-c", 'source scripts/common.sh; t1_parse "$@"; t1_fft2_name',
+                             "test", *args], cwd=ROOT, text=True, capture_output=True, check=True)
+    assert result.stdout == "fft2[n1=0,c=0,r=0,tp=1" + label + ",tw=1,cx=1,oop=1]"
+    result = subprocess.run([bash, "scripts/run_sweep.sh", *args, "--dry-run"],
+                            cwd=ROOT, text=True, capture_output=True, check=True)
+    assert "--fft2-radix-mode " + str(int(radix)) in result.stdout
+
+
+@pytest.mark.parametrize("value", ["-2", "-01", "auto", "1,2", "99999999999"])
+def test_invalid_auto_radix_flags(bash, value):
+    test_invalid_fft2_axes_fail_before_any_commands(bash, "--fft2-radix-mode", value)

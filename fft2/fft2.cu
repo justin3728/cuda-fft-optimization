@@ -467,6 +467,8 @@ struct Plan::Impl {
     int smem_padding;
     int tile_policy;
     int radix_mode;
+    int radix1;
+    int radix2;
     int twiddle_mode;
     int cross_mode;
     int device = -1;
@@ -500,8 +502,8 @@ struct Plan::Impl {
         if (opts.tile_policy < 0 || opts.tile_policy > 1) {
             throw std::runtime_error("fft2: tile_policy must be 0 or 1");
         }
-        if (opts.radix_mode < 0 || opts.radix_mode > 2) {
-            throw std::runtime_error("fft2: radix_mode must be 0, 1 or 2");
+        if (opts.radix_mode < -1 || opts.radix_mode > 2) {
+            throw std::runtime_error("fft2: radix_mode must be -1, 0, 1 or 2");
         }
         if (opts.twiddle_mode < 0 || opts.twiddle_mode > 1) {
             throw std::runtime_error("fft2: twiddle_mode must be 0 or 1");
@@ -546,6 +548,8 @@ struct Plan::Impl {
         const size_t limit = static_cast<size_t>(optin_limit);
         cols = choose_tile(n1, n2, opts.tile_cols, smem_padding, limit, "tile_cols", tile_policy, twiddle_mode);
         rows = choose_tile(n2, n1, opts.tile_rows, smem_padding, limit, "tile_rows", tile_policy, twiddle_mode);
+        radix1 = detail::resolve_radix(radix_mode, n1, cols, kThreads);
+        radix2 = detail::resolve_radix(radix_mode, n2, rows, kThreads);
         log_cols = integer_log2(static_cast<size_t>(cols));
         log_rows = integer_log2(static_cast<size_t>(rows));
         shared1 = shared_bytes(n1, cols, smem_padding, twiddle_mode);
@@ -573,12 +577,12 @@ struct Plan::Impl {
         if (limit > kDefaultSharedLimit) {
             // Set the full device limit, never a smaller plan's requirement:
             // constructing another plan must not invalidate an existing plan.
-            dispatch_kernel(index_mode, smem_padding, cols, radix_mode, log_n1, [&](auto variant, auto fft) {
+            dispatch_kernel(index_mode, smem_padding, cols, radix1, log_n1, [&](auto variant, auto fft) {
                 check_cuda(cudaFuncSetAttribute(pass1_columns<decltype(variant), decltype(fft)>,
                                                cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
                            "opt in pass 1 dynamic shared memory");
             });
-            dispatch_kernel(index_mode, smem_padding, rows, radix_mode, log_n2, [&](auto variant, auto fft) {
+            dispatch_kernel(index_mode, smem_padding, rows, radix2, log_n2, [&](auto variant, auto fft) {
                 check_cuda(cudaFuncSetAttribute(pass2_rows<decltype(variant), decltype(fft)>,
                                                cudaFuncAttributeMaxDynamicSharedMemorySize, optin_limit),
                            "opt in pass 2 dynamic shared memory");
@@ -612,14 +616,14 @@ void Plan::execute(const cuDoubleComplex* in, cuDoubleComplex* out, cudaStream_t
     if (device != p.device) {
         throw std::runtime_error("fft2: execute must use the plan's creation device");
     }
-    dispatch_kernel(p.index_mode, p.smem_padding, p.cols, p.radix_mode, p.log_n1, [&](auto variant, auto fft) {
+    dispatch_kernel(p.index_mode, p.smem_padding, p.cols, p.radix1, p.log_n1, [&](auto variant, auto fft) {
         pass1_columns<decltype(variant), decltype(fft)><<<p.grid1, kThreads, p.shared1, stream>>>(
             in, p.workspace.data, p.n, p.batch, p.n1, p.n2, p.cols, p.log_n1, p.log_cols,
             p.cross_base, p.log_cross_base, p.roots1.data, p.cross_low.data, p.cross_high.data,
             p.cross_full.data, p.twiddle_mode, p.cross_mode);
         check_cuda(cudaGetLastError(), "launch pass 1 (columns)");
     });
-    dispatch_kernel(p.index_mode, p.smem_padding, p.rows, p.radix_mode, p.log_n2, [&](auto variant, auto fft) {
+    dispatch_kernel(p.index_mode, p.smem_padding, p.rows, p.radix2, p.log_n2, [&](auto variant, auto fft) {
         pass2_rows<decltype(variant), decltype(fft)><<<p.grid2, kThreads, p.shared2, stream>>>(
             p.workspace.data, out, p.n, p.batch, p.n1, p.n2, p.rows, p.log_n2, p.log_rows,
             p.roots2.data, p.twiddle_mode);
@@ -638,8 +642,9 @@ std::string Plan::describe() const {
     std::ostringstream output;
     output << "fft2 N=" << p.n << " batch=" << p.batch << " N1=" << p.n1 << " N2=" << p.n2
            << " index_mode=" << p.index_mode << " smem_padding=" << p.smem_padding
-           << " tile_policy=" << p.tile_policy << " radix_mode=" << p.radix_mode
-           << " twiddle_mode=" << p.twiddle_mode << " cross_mode=" << p.cross_mode
+           << " tile_policy=" << p.tile_policy << " radix_mode=" << p.radix_mode;
+    if (p.radix_mode == -1) { output << "(p1=" << p.radix1 << ",p2=" << p.radix2 << ")"; }
+    output << " twiddle_mode=" << p.twiddle_mode << " cross_mode=" << p.cross_mode
            << " cross_table_bytes=" << p.cross_table_bytes
            << " C=" << p.cols << " R=" << p.rows << " workspace_bytes=" << p.bytes
            << " pass1{grid=(" << p.grid1.x << ',' << p.grid1.y << ',' << p.grid1.z

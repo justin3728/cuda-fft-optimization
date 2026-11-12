@@ -156,9 +156,14 @@ to 0, selecting the plan's device-dependent automatic policy.
 `--fft2-smem-padding P` accepts 0, 1 or 2 unused complex elements per shared
 row. Both default to 0 and are forwarded to every sweep worker and profile.
 Requested values form the stable CSV/NVTX name, e.g. `fft2[n1=1024,c=8,r=4]`.
-`--fft2-tile-policy P` accepts 0 or 1; `--fft2-radix-mode M` accepts 0, 1 or 2.
-Both default to 0. Nonzero values append `,tp=P` and `,rx=M`, after padding
-and before `,oop=1`.
+`--fft2-tile-policy P` accepts 0 or 1; `--fft2-radix-mode M` accepts -1, 0, 1 or 2.
+Both bench defaults stay explicitly 0 (v1). Nonzero values append `,tp=P` and
+`,rx=M`, with -1 labelled `,rx=auto`. Label order is `im,pad,tp,rx,tw,cx,oop`.
+The Plan API defaults to `tile_policy=1, radix_mode=-1`, with padding still 0.
+After tile selection, each pass chooses radix-16 (mode 2) when
+`length*lanes/16 >= 256`, otherwise radix-8 (mode 1). `describe()` reports
+the resolved modes as `radix_mode=-1(p1=2,p2=1)`, for example. Use
+`--fft2-tile-policy 1 --fft2-radix-mode -1` to benchmark the new defaults.
 Nonzero index mode and padding append `,im=M` and `,pad=P`, in that order;
 out-of-place then adds `,oop=1` before the closing bracket. Zero values omit
 these suffixes, preserving existing labels such as `fft2[n1=0,c=0,r=0]`. Resolved
@@ -374,8 +379,9 @@ the final line may omit its newline. Optional `log2=20,21` selects sizes from
 the intersection with CLI `--log2`; optional `oop=0|1` chooses buffer mode.
 Without these fields a line uses all requested sizes and the CLI buffer mode
 (in-place by default). Optional `im=0|1` and `pad=0|1|2` select index mode and
-shared padding. Optional `tp=0|1` and `rx=0|1|2` select tile policy and register
+shared padding. Optional `tp=0|1` and `rx=-1|0|1|2` select tile policy and register
 radix mode; each defaults to 0, so existing variant files keep their behavior.
+Use `tp=1 rx=-1` for the new Plan defaults.
 For example:
 
 ```text

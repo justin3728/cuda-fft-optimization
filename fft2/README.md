@@ -66,6 +66,8 @@ default batch-1 plan descriptions and a summary; it does not execute FFTs.
 `index_mode` in `{0,1}`, `smem_padding` in `{0,1,2}` and `tile_policy` in
 `{0,1}`, plus `radix_mode` in `{1,2}` crossed with `tile_policy` in `{0,1}`
 at `index_mode=0, smem_padding=0`: 464 original configuration outcomes.
+T4d also runs the default `tile_policy=1, radix_mode=-1` plan across the same
+29 configurations, including every exponent from 16 to 24.
 T4c adds `(twiddle_mode,cross_mode)` pairs `(1,0)`, `(0,1)`, `(1,1)` on
 `radix_mode={0,2}` and `tile_policy={0,1}`, with index/padding fixed at zero.
 These 12 additional variants run at batch 1 for exponents 16/19/20/22/24,
@@ -182,8 +184,8 @@ candidate.execute(device_input, device_output, stream);
 |---|---|---|
 | `index_mode` | `0` (default), `1` | **H9:** replacing runtime 64-bit division/remainder with u32 shift/mask may reduce integer instruction overhead. Mode 1 uses u32 for block-local indices and offsets within one transform, including cross-table indexing; the batch base/global address stays 64-bit. |
 | `smem_padding` | `0` (default), `1`, `2` | **H10:** changing the shared row stride from `lanes` to `lanes+padding` may reduce shared-memory bank conflicts. Each padding unit is one unused FP64 complex element per element-row, so allocation is `length*(lanes+padding)*16` bytes. |
-| `tile_policy` | `0` (default), `1` | **H13:** policy 0 keeps v1's largest fitting power-of-two width up to 8. Policy 1 chooses the largest power-of-two width bounded by the other dimension and 32 KiB (including padding), with at least two lanes; if two lanes exceed the device limit, it uses policy 0's choice. Explicit C/R override either policy independently. |
-| `radix_mode` | `0` (default), `1`, `2` | **H11:** keep v1, fuse radix-8 in registers, or fuse radix-16 in registers. Internal roots are constexpr; external twiddles use the existing length-L table. |
+| `tile_policy` | `0`, `1` (default) | **H13:** policy 0 keeps v1's largest fitting power-of-two width up to 8. Policy 1 chooses the largest power-of-two width bounded by the other dimension and 32 KiB (including padding), with at least two lanes; if two lanes exceed the device limit, it uses policy 0's choice. Explicit C/R override either policy independently. |
+| `radix_mode` | `-1` (default), `0`, `1`, `2` | **H11/L006:** -1 selects mode 2 per pass when `length*lanes/16 >= 256`, otherwise mode 1, after tile selection. Explicit 0 keeps v1, 1 fuses radix-8 in registers, and 2 fuses radix-16. Internal roots are constexpr; external twiddles use the existing length-L table. `describe()` includes both resolved modes for auto, e.g. `radix_mode=-1(p1=2,p2=1)`. |
 | `twiddle_mode` | `0` (default), `1` | **H12:** read roots through `__ldg`, or stage all L roots in shared once per block. Both FFT paths use this choice. Shared bytes become `length*(lanes+padding+twiddle_mode)*16`; both tile policies include roots in their budget. |
 | `cross_mode` | `0` (default), `1` | **H12:** keep the high/low product, or upload one table of N entries and perform one lookup per element. `describe()` reports `cross_table_bytes`; tables do not scale with batch. |
 

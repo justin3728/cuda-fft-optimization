@@ -117,17 +117,20 @@ struct Counts {
 
 struct Summary {
     Counts total;
-    Counts axes[3][2][3][2][2][2];
+    Counts axes[4][2][3][2][2][2];
 
     void add(Outcome result, fft2::PlanOptions options) {
         total.add(result);
-        axes[options.radix_mode][options.index_mode][options.smem_padding][options.tile_policy]
+        axes[options.radix_mode + 1][options.index_mode][options.smem_padding][options.tile_policy]
             [options.twiddle_mode][options.cross_mode].add(result);
     }
 };
 
 std::vector<fft2::PlanOptions> variants_for(fft2::PlanOptions options, bool variants, bool twiddles = true) {
     std::vector<fft2::PlanOptions> result;
+    if (!variants) { return {options}; }
+    const auto default_options = options;
+    options.radix_mode = 0;  // Preserve the existing explicit v1 matrix.
     for (int mode = 0; mode <= (variants ? 1 : 0); ++mode) {
         for (int padding = 0; padding <= (variants ? 2 : 0); ++padding) {
             for (int policy = 0; policy <= (variants ? 1 : 0); ++policy) {
@@ -169,6 +172,7 @@ std::vector<fft2::PlanOptions> variants_for(fft2::PlanOptions options, bool vari
             }
         }
     }
+    result.push_back(default_options);  // Default plan at every size, also with --variants.
     return result;
 }
 
@@ -350,7 +354,7 @@ bool api_checks() {
             expect_error([policy] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, policy}); },
                          "invalid tile policy");
         }
-        for (int radix : {-1, 3}) {
+        for (int radix : {-2, 3}) {
             expect_error([radix] { fft2::Plan plan(size_t{1} << 16, 1, {0, 0, 0, 0, 0, 0, radix}); },
                          "invalid radix mode");
         }
@@ -362,6 +366,8 @@ bool api_checks() {
         }
         for (int cross : {0, 1}) {
             fft2::PlanOptions options;
+            options.tile_policy = 0;
+            options.radix_mode = 0;
             options.twiddle_mode = 1;
             options.cross_mode = cross;
             const fft2::Plan candidate(size_t{1} << 16, 1, options);
@@ -373,7 +379,14 @@ bool api_checks() {
                 throw std::runtime_error("twiddle description / table or shared bytes disagree");
             }
         }
+        const fft2::Plan mixed(size_t{1} << 18, 1, {512, 8, 4});
+        if (mixed.describe().find("radix_mode=-1(p1=2,p2=1)") == std::string::npos) {
+            throw std::runtime_error("auto radix description must resolve each pass independently");
+        }
         fft2::Plan plan(size_t{1} << 16, 1);
+        if (plan.describe().find("smem_padding=0 tile_policy=1 radix_mode=-1(p1=") == std::string::npos) {
+            throw std::runtime_error("default plan options disagree");
+        }
         expect_error([&plan] { plan.execute(nullptr, nullptr, nullptr); }, "null input/output");
         std::cout << "API checks PASS\n";
         return true;
@@ -418,6 +431,7 @@ int main(int argc, char** argv) {
                           << " plus radix_mode={1,2} x tile_policy={0,1} at index_mode=smem_padding=0,"
                           << " plus nonzero (twiddle_mode,cross_mode) pairs on radix_mode={0,2}"
                           << " x tile_policy={0,1} at index_mode=smem_padding=0 on sampled sizes,"
+                          << " plus the default tile_policy=1, radix_mode=-1 plan at every size,"
                           << " where shared memory fits.\n"
                           << "--describe prints batch=1 plans for every N, without executing FFTs.\n";
                 return 0;
@@ -472,7 +486,7 @@ int main(int argc, char** argv) {
         }
         bool all_axes_executed = true;
         for (const auto options : variants_for({}, variants)) {
-            const Counts& axis = summary.axes[options.radix_mode][options.index_mode]
+            const Counts& axis = summary.axes[options.radix_mode + 1][options.index_mode]
                                              [options.smem_padding][options.tile_policy]
                                              [options.twiddle_mode][options.cross_mode];
             std::cout << "VARIANT_SUMMARY index_mode=" << options.index_mode

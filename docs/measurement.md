@@ -1,11 +1,12 @@
 # T1 measurement tooling
 
-This tooling measures FP64 complex-to-complex, contiguous, in-place, forward,
-unnormalized FFTs. It does not change the existing FFT implementation or its
-default build. The owner supplied a successful pre-fix L4 quick smoke run in
+This tooling measures FP64 complex-to-complex, contiguous, forward, unnormalized
+FFTs with four backends: legacy, cuFFT, VkFFT and fft2. Execution is in-place by
+default; fft2 also supports an explicit out-of-place comparison. It does not
+change the existing FFT implementation or its default build. The owner supplied a successful pre-fix L4 quick smoke run in
 [`results/smoke_l4_20261111/`](../results/smoke_l4_20261111/). The review fixes
-documented here require another GPU run; no new GPU measurements accompany this
-round. A100 correctness, throughput and the full runtime target remain
+documented here and the fft2 integration require another GPU run; no new GPU
+measurements accompany this round. A100 correctness, throughput and the full runtime target remain
 **unverified**. Synthetic arithmetic fixtures and reconstructed raw-CSV unit
 fixtures are identified as test inputs, rather than new performance results.
 
@@ -14,7 +15,7 @@ fixtures are identified as test inputs, rather than new performance results.
 | Path | Purpose |
 | --- | --- |
 | `bench/common/` | CUDA resource/error handling, CLI/config parsing, CSV/JSON escaping, vector memory kernels, seeded input, correctness metrics, shared event timing, L2 flush, NVTX |
-| `bench/backends/` | Small backend interface/registry and public-API legacy, cuFFT, VkFFT adapters |
+| `bench/backends/` | Small backend interface/registry and public-API legacy, cuFFT, VkFFT, fft2 adapters |
 | `bench/fft_bench.cu` | Sweep supervisor, isolated config workers, single-execution profiling, VkFFT export |
 | `bench/Makefile.inc` | Optional C++17 measurement targets, included after the original Makefile rules |
 | `tools/bwtest.cu` | HBM launch sweep, L2 curve, exact-size hot/cold pass floors, bandwidth profiling |
@@ -25,6 +26,7 @@ fixtures are identified as test inputs, rather than new performance results.
 | `scripts/export_vkfft_kernels.sh`, `scripts/run_ncu.sh` | Generated CUDA sources and per-launch profiler reports |
 | `scripts/run_analysis.sh`, `scripts/analysis/` | Derived CSV, PNG plots, summary tables, counter selection and report retention |
 | `scripts/run_t1_all.sh` | Build and run every stage, with logs, elapsed times and final status table |
+| `scripts/run_fft2_variants.sh`, `scripts/fft2_variants_default.txt` | One-allocation variant sweeps/profiles with shared build, baselines and calibration |
 | `tests/` | Python analysis tests, realistic ncu CSV format fixtures, CPU shell orchestration tests |
 
 All generated run files and build products go beneath `results/<tag>/`. The
@@ -35,14 +37,14 @@ exception described below; all of their raw CSVs stay in the run directory.
 
 ## Prerequisites and commands
 
-Run on Linux with a CUDA 12.x toolkit, a supported host C++17 compiler (GCC 9 or
+Run on Linux with a CUDA 12.x/13.x toolkit, a supported host C++17 compiler (GCC 9 or
 newer), NVIDIA driver, cuFFT, NVRTC, CUDA driver development library/stubs,
 NVTX3 headers, Nsight Compute, Bash, GNU Make, Git and Python 3.10+.
 The updated project plan also targets Colab's CUDA 13.0 environment. The scripts
 explicitly build `sm_80`, and bandwidth reference queries use device attributes
 instead of the `cudaDeviceProp` clock fields removed in CUDA 13. The owner's
 pre-fix L4 smoke run validated CUDA 13 compilation and VkFFT initialization;
-the changed CUDA code has not been rebuilt in the CPU authoring environment.
+the T2b harness compiles locally with CUDA 13.5 for sm_80 and sm_89 with zero warnings.
 If the toolkit does not include `nvtx3/nvToolsExt.h`, install NVIDIA's NVTX3
 headers on the compiler include path. Optional FFTW checks require double
 precision FFTW headers/library (`libfftw3-dev` on Ubuntu).
@@ -66,7 +68,7 @@ keep their required working-set sizes and minimum durations in quick mode.
 The full sweep uses every exponent `16..24`, modes `b1,b8,t25`, `R=15`, `K=20`.
 Targets are at most five minutes for quick and 45 minutes for full, **not
 verified on the A100**. The full default ncu plan now has an upper bound of
-334 captured kernel launches, including cache-policy comparisons and bandwidth
+352 captured kernel launches, including cache-policy comparisons and bandwidth
 copies. Its dry-run prints the bound per config and in total. Replay cost still
 depends on the installed ncu release and GPU host. The runner reports actual
 elapsed seconds per stage in `stage_status.csv`.
@@ -91,7 +93,7 @@ scripts/run_analysis.sh --tag a100_manual
 Use the same `--log2`, `--batch-modes`, `--trials` and `--iters` for bandwidth
 floors and the FFT sweep. Batch modes are `b<count>` or `t<log2-total>`; `t25`
 means `batch=2^25/N`, or 512 MiB of complex doubles. Sizes must divide the fixed
-total. Use `--impls legacy,cufft,vkfft` to select implementations.
+total. Use `--impls legacy,cufft,vkfft,fft2` to select implementations (the default).
 `--profile-log2` and `--profile-batch-modes` configure full-mode ncu/export
 configs, defaulting to `16,20,22,24` and `b1,t25`. Quick export follows the quick
 sweep sizes/modes, while quick profiling uses `--profile-log2` and batch one.
@@ -137,6 +139,35 @@ adapter through the three-line registry in `backend.hpp`.
   After initialization, a checked `cudaDeviceSynchronize()` completes setup
   issued on stream 0 before the nonblocking timing stream is used. Execution
   updates its stream pointer only when the stream changes.
+* fft2 uses the unmodified `fft2::Plan` compiled directly from `fft2/fft2.cu`.
+  Support requires power-of-two N in `2^16..2^24`, batch >= 1, and enough free
+  device memory for its workspace, backend-owned data buffer(s), and up to
+  256 KiB of twiddle tables. The plan also validates split, shared-memory and
+  grid limits. Extra harness/reference allocations can still fail in a worker
+  and are reported as errors. Execution calls `plan.execute(buf, buf, stream)`
+  by default. `--fft2-out-of-place` allocates a distinct output buffer and
+  correctness compares that output, while input restoration targets the input.
+  Planning, allocation and table upload stay outside timing/NVTX.
+
+Use `--impl fft2` (or `--impls fft2`) and `--fft2-n1 K --fft2-tile-cols C
+--fft2-tile-rows R` in the binary or shell runners. Every tuning option defaults
+to 0, selecting the plan's device-dependent automatic policy. Requested values
+form the stable CSV/NVTX name, e.g. `fft2[n1=1024,c=8,r=4]`; out-of-place adds
+`,oop=1` before the closing bracket. Auto is `fft2[n1=0,c=0,r=0]`. Resolved
+N1/N2/C/R, launch dimensions, shared bytes and workspace bytes come from the
+unaltered `plan.describe()` and are recorded in `impl_detail`. The requested
+name stays consistent across sizes, including when auto resolves differently.
+
+```bash
+scripts/run_sweep.sh --tag fft2_manual --impl fft2 --log2 20 --batch-modes b1 \
+  --fft2-n1 1024 --fft2-tile-cols 8 --fft2-tile-rows 4 --fft2-out-of-place
+```
+
+For out-of-place hot trials, the K executions read the same restored input
+and overwrite the same output; in-place hot trials repeatedly transform their
+buffer. Neither mode adds a timed copy or swaps the two pass kernels. The
+measured in-place pass floor remains the common normalization for both modes;
+the separate out-of-place floor is retained for traffic comparisons.
 
 The sweep supervisor does not create a CUDA context. It fork/execs a new worker
 for each implementation/config, captures its log, and collects two timing-mode
@@ -251,7 +282,7 @@ buffers.
 
 | Column | Meaning |
 | --- | --- |
-| `impl` | `legacy`, `cufft`, or `vkfft` |
+| `impl` | `legacy`, `cufft`, `vkfft`, or a requested fft2 variant such as `fft2[n1=0,c=0,r=0]` |
 | `N`, `log2N` | Complex elements per transform and its base-two exponent |
 | `batch`, `batch_mode` | Actual contiguous transform count and requested `b…`/`t…` label |
 | `timing_mode` | `hot` or `cold` |
@@ -261,6 +292,7 @@ buffers.
 | `rel_l2_err`, `max_abs_err` | One-execution correctness errors, outside timing |
 | `status` | `ok`, `wrong`, `unsupported`, or `error` |
 | `note` | Seed, optional FFTW results, or failure/unsupported reason and worker-log path |
+| `impl_detail` | Appended column: resolved `fft2::Plan::describe()`; empty for other backends and plans that were not created |
 
 Unmeasured values are `NA`. Incorrect results may have measured timing fields,
 but do not contribute to derived metrics or plots. Nonfinite correctness
@@ -294,11 +326,71 @@ by launches and passes-per-launch. `pass_floor.csv` identifies N/batch/batch_mod
 maxima, the D2D API comparison, L2 read/copy medians, plateau range/rule, reported
 L2 size and optional reference theoretical DRAM bandwidth.
 
-Plots in `plots/` use a fixed Okabe-Ito color for each implementation, across
-all batch/timing groups. For each group they show time versus N on log-log
+CSV fields are escaped, including variant names and plan descriptions containing
+commas. Analysis still accepts older CSVs without `impl_detail`.
+
+Plots in `plots/` use a fixed Okabe-Ito color for each backend, across
+all batch/timing groups. fft2 uses purple; each requested variant is a separate
+series with its own legend entry and marker/line style. For each group they show time versus N on log-log
 axes, dashed measured 1-pass/2-pass floors, pass equivalents, and percent of
 cuFFT. `summary.md` includes every row's status and errors, including unsupported
 or failing configs, so missing curves do not hide failures.
+
+## fft2 variants in one allocation
+
+Run `scripts/run_fft2_variants.sh` once inside an already allocated GPU job. It
+builds once, collects the environment, measures bandwidth/floors once, and runs
+legacy/cuFFT/VkFFT baselines once. It then runs every selected fft2 variant in
+sequence. `--ncu` enables profiling; the baseline job supplies the shared copy
+calibration and variant jobs use `--skip-copy-profiles`. The script does not
+allocate a GPU. An individual failed sweep/profile does not stop later variants,
+and any failure makes the final exit code nonzero.
+
+```bash
+# Inspect the complete command list without files, a toolkit or a GPU.
+scripts/run_fft2_variants.sh --tag fft2_ab \
+  --variants scripts/fft2_variants_default.txt --ncu --dry-run
+
+# Run in a single A100 allocation; omit --ncu for sweep-only comparisons.
+scripts/run_fft2_variants.sh --tag fft2_ab \
+  --variants scripts/fft2_variants_default.txt --ncu
+```
+
+Each nonblank variant line contains `n1=K c=C r=R`. `#` begins a comment, and
+the final line may omit its newline. Optional `log2=20,21` selects sizes from
+the intersection with CLI `--log2`; optional `oop=0|1` chooses buffer mode.
+Without these fields a line uses all requested sizes and the CLI buffer mode
+(in-place by default). For example:
+
+```text
+n1=0 c=0 r=0
+log2=20 n1=1024 c=4 r=4
+log2=20 n1=1024 c=8 r=8 oop=1
+```
+
+The default file includes the auto policy and six alternatives for each exponent
+16..24: smaller tiles, alternate splits where valid, and out-of-place cases.
+These are candidates based on `fft2/README.md`'s calculated shared-memory budgets,
+not tuning results. Explicit defaults need at most 128 KiB per pass, fitting the
+documented A100 163 KiB opt-in budget. Some exceed L4's 99 KiB budget: for L4,
+use an auto-only file or reduce explicit tiles to fit the queried device limit.
+The default auto line adapts to both devices. The whole file's syntax, dimensions
+and duplicate configs are checked before commands execute; runtime plan creation
+checks device-specific tile limits. No file contents are evaluated as shell code.
+
+The runner accepts the common size/timing/profile options. The file owns N1/C/R
+and the baseline set is fixed; choose a subset of file lines/sizes for shorter
+jobs. Profiles use each line's intersection with `--profile-log2` and profile
+batch modes. An empty profile intersection still permits a sweep.
+
+All final artifacts are contained in `results/<tag>/`: `variants.csv` maps
+requested configs to `variants/v001/`, etc.; `variants/baseline/` and each worker
+retain raw CSVs, logs and profiler artifacts. Workers temporarily use unique
+`<tag>.baseline`/`<tag>.v001` tags, then move into that tree. Binary paths point
+to the shared `<tag>/build/`. `merge_variants.py` combines sweep rows and rebases
+the ncu index paths before the normal analysis produces combined plots/tables.
+The top-level environment, bandwidth floors, limits and VkFFT exports are shared.
+Copy/fetch the complete `results/<tag>/` tree to preserve those relative paths.
 
 ## Nsight Compute collection and summaries
 
@@ -308,8 +400,9 @@ restores once more and synchronizes, then enqueues exactly one execution inside
 kernels. No timing/correctness/flush kernels are inside the range. The driver
 works directly in one process in profile mode; ncu also uses
 `--target-processes all`. CUDA runtime and driver launches are both intercepted,
-so VkFFT's `cuLaunchKernel` calls are included. The command escapes the literal
-slashes in the NVTX name and adds the final push/pop filter slash.
+so VkFFT's `cuLaunchKernel` calls are included. The command escapes literal
+slashes, variant brackets and commas in the NVTX name, then adds the final
+push/pop filter slash.
 
 The NVTX range and original batch allocation still cover a full execution.
 `--launch-count` bounds how many matching launches ncu replays; the application
@@ -327,6 +420,10 @@ fails the config with unknown expected total rather than treating a possibly
 truncated execution as complete or inventing an extrapolation ratio. Bandwidth
 copies each capture their known single launch. Actual counts are parsed from
 the raw CSV, and legacy counts must match the planned complete-batch prefix.
+fft2 captures exactly two launches per execution regardless of batch, with
+`--launch-count 2`. Collection and analysis require `pass1_columns` followed by
+`pass2_rows`; missing, extra or unrelated kernels fail rather than being sampled
+or extrapolated. The escaped variant label must match the one used by the binary.
 
 Primary captures use `--set full --cache-control all --clock-control none
 --replay-mode kernel`. This makes replay passes reproducible by flushing GPU
@@ -351,7 +448,9 @@ whole capture. Each binary `.ncu-rep` is exported using
 `ncu --import … --page raw --csv --print-units base`. `index.csv` maps raw CSVs
 to implementation/config/cache-control/status, including unsupported legacy
 configs. It also records `captured_kernels`, `expected_kernels`, `sampled`,
-`capture_limit` and `kernels_per_batch`. Captures and CSV exports have individual
+`capture_limit` and `kernels_per_batch`. An appended `impl_detail` column stores
+the fft2 plan description printed by the profile worker (empty for other backends).
+Captures and CSV exports have individual
 logs too. An older index without sampling columns is interpreted as a complete
 capture for backward-compatible analysis.
 
@@ -368,7 +467,7 @@ Per-config CSV and Markdown under `ncu/summary/` contain:
 
 | Field group | Meaning |
 | --- | --- |
-| `impl,N,batch,batch_mode,cache_control,kernel_id,kernel` | Config, replay policy, distinct launch ID, shortened demangled kernel name |
+| `impl,impl_detail,N,batch,batch_mode,cache_control,kernel_id,kernel` | Variant/config and resolved plan, replay policy, distinct launch ID, shortened demangled kernel name |
 | `grid,block,registers_per_thread` | Grid/block tuple when exported, with launch-count metrics as fallback, and registers per thread |
 | `static_smem_bytes,dynamic_smem_bytes,smem_bytes` | Shared memory per block and their sum |
 | `duration_us,pct_config_time` | Profiled duration in microseconds and percent of the captured kernel-duration sum; sampling does not alter per-kernel values |
@@ -377,7 +476,7 @@ Per-config CSV and Markdown under `ncu/summary/` contain:
 | `pct_mixed_hbm_limit` | Ideal read-plus-write service time at the separately measured peaks, divided by actual kernel duration, as a percentage |
 | `l2_GBs,pct_measured_l2_copy` | `lts_bytes/duration` and historical L2 copy-limit percentage |
 | `pct_l2_limit,l2_limit_method` | Total lts traffic normalized to the measured L2 read plateau; method is `total_lts_bytes/read_plateau` because a read/write sector split is not collected |
-| `working_set_fits_l2` | Conservative two-buffer proxy: `32*N*batch <= limits.json:l2_size_bytes`; NA if cache size is unavailable or this is a bandwidth-copy profile |
+| `working_set_fits_l2` | Buffer proxy: `32*N*batch <= limits.json:l2_size_bytes`, or `48*N*batch` for fft2 out-of-place (input, workspace, output); excludes tables/library scratch; NA if cache size is unavailable or this is a bandwidth-copy profile |
 | `sampled,captured_kernels,expected_kernels,sampling_ratio,extrapolation_factor` | Sampling flag/counts, captured/expected ratio and expected/captured scale |
 | `theoretical_occupancy_pct,achieved_occupancy_pct` | Theoretical maximum and active-warps occupancy metrics |
 | `shared_bank_conflicts_ld,shared_bank_conflicts_st,fp64_pipe_util_pct` | Shared load/store conflict counters and FP64 pipe utilization |
@@ -448,10 +547,13 @@ or privileges: whether clocks could actually be locked is explicitly
 **unverified**, rather than inferred from a supported-clock list.
 
 ```bash
-python3 -m pytest tests/
+pytest tests -q
 for script in scripts/*.sh; do bash -n "$script"; done
-shellcheck -x -P . scripts/*.sh
+shellcheck scripts/*.sh
 scripts/run_t1_all.sh --tag test --dry-run
+make bench TAG=t2b CUDA_ARCH=sm_80
+# Force a rebuild when changing architecture under the same tag.
+make -B bench TAG=t2b CUDA_ARCH=sm_89
 ```
 
 CPU tests cover derivation units/joins/statuses, PNG generation, realistic ncu
@@ -461,8 +563,25 @@ and counter-permission errors. Fix-round regression tests cover bounded complete
 batch sampling, extrapolated totals, read-dominated HBM percentages, L2 residency
 notes and ncu 2025.3 shared-memory units. Source review must also confirm the protected
 legacy files/results are unchanged and the original default Makefile recipes
-are unchanged. The code has not been built with nvcc in the authoring
-environment, where that compiler is unavailable.
+are unchanged. T2b validation on 2026-11-11: 81 tests passed; ShellCheck 0.11.0
+reported no diagnostics; CUDA 13.5.37 compiled the harness for sm_80 and sm_89
+with zero warnings. Added CPU cases exercise variant command lists, shared
+build/calibration, continuation after worker failure, A100 candidate budgets,
+quoted variant/detail fields, four-backend plots, merged profile paths and
+exact two-pass capture validation. Fixtures are synthetic, not GPU measurements.
+
+The next L4 gate (Claude/owner, later) is:
+
+```bash
+CUDA_ARCH=sm_89 scripts/run_t1_all.sh --tag t2b_l4 --quick
+```
+
+Require every `stage_status.csv` entry to be `OK` and every fft2 sweep row to be
+`ok`. GPU confirmation remains necessary for cuFFT-relative error <= 1e-12,
+in-place/out-of-place outputs, resolved device tile policies, matching escaped
+NVTX filters, exactly two captured kernels, and populated counters. Follow with
+custom splits/tiles and the variants runner (use L4-fitting candidates first).
+No GPU runtime was allocated for the T2b authoring checks.
 
 On the A100, confirm that all supported rows meet the tolerance, every requested
 source export matches the captured launch count, core counters are populated,
@@ -470,7 +589,7 @@ the measured L2 curve/traffic validates the plateau rule, measured HBM agrees
 with the device's reference bandwidth, and runtime fits the quick/full targets.
 Specific assumptions requiring that run are VkFFT's retained `code0` and axis
 function mapping in the pinned release, successful single-stream NVRTC/driver
-execution, cuFFT/VkFFT sign/layout compatibility, literal-slash NVTX filter
+execution, cuFFT/VkFFT sign/layout compatibility, escaped NVTX variant filter
 matching in the installed ncu version, and availability of the requested sm_80
 metrics. The source pins these choices; it supplies no GPU verification claims.
 

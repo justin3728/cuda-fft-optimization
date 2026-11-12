@@ -1,0 +1,79 @@
+# A100 candidate list; calculated budgets only, no performance claims.
+# Format: n1=K c=C r=R [log2=16,17,...] [oop=0|1]; 0 selects auto.
+# The auto policy works on L4 too. Explicit candidates can require 128 KiB
+# per block (A100 opt-in limit: 163 KiB; L4: 99 KiB). Reduce tiles on L4.
+# Each size class has six alternatives: smaller tiles, an alternate split
+# where possible, and three out-of-place configurations. See fft2/README.md.
+n1=0 c=0 r=0
+
+# log2=16: auto split 256 x 256; full candidate tiles use 32/32 KiB.
+log2=16 n1=256 c=4 r=8
+log2=16 n1=256 c=8 r=4
+log2=16 n1=256 c=4 r=4
+log2=16 n1=256 c=8 r=8 oop=1
+log2=16 n1=256 c=4 r=8 oop=1
+log2=16 n1=256 c=8 r=4 oop=1
+
+# log2=17: auto split 256 x 512; full candidate tiles use 32/64 KiB.
+log2=17 n1=256 c=4 r=8
+log2=17 n1=256 c=8 r=4
+log2=17 n1=512 c=8 r=8
+log2=17 n1=256 c=8 r=8 oop=1
+log2=17 n1=256 c=4 r=8 oop=1
+log2=17 n1=256 c=8 r=4 oop=1
+
+# log2=18: auto split 512 x 512; full candidate tiles use 64/64 KiB.
+log2=18 n1=512 c=4 r=8
+log2=18 n1=512 c=8 r=4
+log2=18 n1=256 c=8 r=8
+log2=18 n1=512 c=8 r=8 oop=1
+log2=18 n1=512 c=4 r=8 oop=1
+log2=18 n1=512 c=8 r=4 oop=1
+
+# log2=19: auto split 512 x 1024; full candidate tiles use 64/128 KiB.
+log2=19 n1=512 c=4 r=8
+log2=19 n1=512 c=8 r=4
+log2=19 n1=1024 c=8 r=8
+log2=19 n1=512 c=8 r=8 oop=1
+log2=19 n1=512 c=4 r=8 oop=1
+log2=19 n1=512 c=8 r=4 oop=1
+
+# log2=20: auto split 1024 x 1024; full candidate tiles use 128/128 KiB.
+log2=20 n1=1024 c=4 r=8
+log2=20 n1=1024 c=8 r=4
+log2=20 n1=512 c=8 r=4
+log2=20 n1=1024 c=8 r=8 oop=1
+log2=20 n1=1024 c=4 r=8 oop=1
+log2=20 n1=1024 c=8 r=4 oop=1
+
+# log2=21: auto split 1024 x 2048; full candidate tiles use 128/128 KiB.
+log2=21 n1=1024 c=4 r=4
+log2=21 n1=1024 c=8 r=2
+log2=21 n1=2048 c=4 r=8
+log2=21 n1=1024 c=8 r=4 oop=1
+log2=21 n1=1024 c=4 r=4 oop=1
+log2=21 n1=1024 c=8 r=2 oop=1
+
+# log2=22: auto split 2048 x 2048; full candidate tiles use 128/128 KiB.
+log2=22 n1=2048 c=2 r=4
+log2=22 n1=2048 c=4 r=2
+log2=22 n1=1024 c=8 r=2
+log2=22 n1=2048 c=4 r=4 oop=1
+log2=22 n1=2048 c=2 r=4 oop=1
+log2=22 n1=2048 c=4 r=2 oop=1
+
+# log2=23: auto split 2048 x 4096; full candidate tiles use 128/128 KiB.
+log2=23 n1=2048 c=2 r=2
+log2=23 n1=2048 c=4 r=1
+log2=23 n1=4096 c=2 r=4
+log2=23 n1=2048 c=4 r=2 oop=1
+log2=23 n1=2048 c=2 r=2 oop=1
+log2=23 n1=2048 c=4 r=1 oop=1
+
+# log2=24: auto split 4096 x 4096; full candidate tiles use 128/128 KiB.
+log2=24 n1=4096 c=1 r=2
+log2=24 n1=4096 c=2 r=1
+log2=24 n1=4096 c=1 r=1
+log2=24 n1=4096 c=2 r=2 oop=1
+log2=24 n1=4096 c=1 r=2 oop=1
+log2=24 n1=4096 c=2 r=1 oop=1

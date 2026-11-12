@@ -554,8 +554,8 @@ def comparison_section(current, baseline, md, impls):
     old = indexed(baseline.sweeps, fields, variants=True)
     new = indexed(current.sweeps, fields, variants=True)
     has_detail = any("impl_detail" in row.data for row in [*baseline.sweeps, *current.sweeps])
-    columns = ["N", "Batch", "Batch label", "Impl"] + (["impl_detail"] if has_detail else [])
-    columns += ["Timing", "Before (µs)", "After (µs)", "Delta (µs)", "Delta (%)", "Before status", "After status"]
+    key_columns = ["N", "Batch", "Batch label", "Impl"] + (["impl_detail"] if has_detail else [])
+    columns = key_columns + ["Timing", "Before (µs)", "After (µs)", "Delta (µs)", "Delta (%)", "Before status", "After status"]
     rows = []
     for identity in sorted(old.keys() & new.keys(), key=series_sort):
         before, after = old[identity], new[identity]
@@ -587,7 +587,7 @@ def comparison_section(current, baseline, md, impls):
         unmatched.append(values + [row.value("timing_mode"), "before only" if identity in old else "after only"])
     if unmatched:
         output += "### Non-overlapping sweep configurations\n\nThese full keys have no counterpart and are not compared.\n\n"
-        output += md.table(columns[:4 + has_detail] + ["Timing", "Present in"], unmatched)
+        output += md.table(key_columns + ["Timing", "Present in"], unmatched)
     return output
 
 

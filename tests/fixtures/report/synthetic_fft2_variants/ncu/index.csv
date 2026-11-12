@@ -1,0 +1,5 @@
+impl,N,batch,batch_mode,cache_control,clock_control,fixture_note
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,none,none,synthetic CPU schema fixture; not a GPU run
+"fft2[n1=1024,c=4,r=8,oop=1]",128,1,b1,all,none,synthetic CPU schema fixture; not a GPU run
+"fft2[n1=0,c=0,r=0]",128,1,b1,none,none,synthetic CPU schema fixture; not a GPU run
+"fft2[n1=0,c=0,r=0]",128,1,b1,all,none,synthetic CPU schema fixture; not a GPU run

@@ -83,7 +83,7 @@
 | Harness | `scripts/colab/run.sh`：一次 GPU 執行的完整流程，失敗也自動 stop | Claude | ✅ 2026-11-11（CPU runtime 端到端測試） |
 | ~~T3~~ | 併入 T2 | — | ✖ |
 | T4a | fft2 變體 1：32-bit shift/mask 索引（H9）、shared padding（H10），opt-in，預設輸出不變 | Codex | 📤 2026-11-11 晚交給 Codex |
-| T4b | fft2 變體 2：register radix-8/16（H11），疊在 T4a 上 | Codex | 📤 T4a 推上去後接著做 |
+| T4b | fft2 變體 2：register radix-8/16（H11）＋ **H13 附錄**（shared 只做交換、`tile_policy` 佔用率導向，2026-11-12 加），疊在 T4a 上 | Codex | 📝 尚未開始；連同附錄交給 Codex |
 | T4c | fft2 變體 3：twiddle 存取（shared 暫存 / 遞推 / 單表 cross twiddle，H12），疊在 T4b 上 | Codex | 📤 T4b 推上去後接著做 |
 | T6 | `scripts/a100_session.sh`：一次 A100 allocation 跑完 gate + T1 full + 變體 + 報告，可續跑、有時間預算 | Codex | 📤 2026-11-11 晚 |
 | T7 | `fft2/tools/plan_explorer.py`：不靠 GPU 預測 occupancy、coalescing、bank conflict（標為模型預測） | Codex | 📤 2026-11-11 晚 |
@@ -104,7 +104,13 @@
 - **2026-11-11 晚**：GPU 是瓶頸，先把不需 GPU 的工作全部派給 Codex（T3、T2b、T4a→T4b→T4c、T5a、T6、T7、T8；T3/T2b/T4a/T5a 已推上 PR #3/#7/#6/#5，分支／目錄互不重疊）。下次 A100 allocation 目標：T2 gate + T1 full + T4 變體 A/B 一次跑完。
 - **2026-11-12**：T2 gate 在 **A100-SXM4-40GB 通過**（使用者用另一個帳號連上，Colab UI Run all）。正確性 28/0/1，每次 execute 2 kernels，DRAM 讀 1.00 趟、寫 0.94–0.98 趟。另在 G4（sm_120）通過正確性。見 L003、`results/t2_gate_a100_20261112/`、`results/t2_gate_g4_20261112/`。
 - v1 在 A100 上 2^24 b1 合計 3.22 ms，等效頻寬只有 282–408 GB/s。ncu 顯示**佔用率被 shared memory 限在 12.5%**（每 SM 1 block）。
-- **下一步**：(1) 使用者 merge PR #2；(2) A100 跑 T1 full，拿實測頻寬上限與 cuFFT/VkFFT baseline；(3) 調優優先順序依 L003 重排，見該條目「下一步」，待使用者決定。
+- 2026-11-12：使用者把規劃安排交給 Claude（§8）。Codex 分支已推上：T1（含 fix-1）、T2b、T3、T4a、T5a、T6、T7、T8；T4b、T4c 尚未開始。
+- **下一步（Claude 排定，依序）**
+  1. merge PR #2（T2）。
+  2. 審 + merge，依相依順序：PR #1 T1（複審 fix-1 @ dce6093）→ T3 CI → T2b（疊在 T1+T2 上）→ T4a → T6 → T5a / T7 / T8。每個審查發現就寫成修正 prompt 交給 Codex。
+  3. T4b 加上 H13 附錄（`docs/codex-tasks/T4b-fft2-register-radix.md`：register 存資料、shared 只做交換、`tile_policy` 佔用率導向）。T4b 尚未開始，直接連同附錄交給 Codex。
+  4. **下次 A100 allocation**（T6 `a100_session.sh`，或在 T6 merge 前用 notebook 手動跑）：T1 full（實測頻寬上限 + cuFFT/VkFFT baseline）＋ T2b sweep 加 `--fft2-tile-cols/--fft2-tile-rows ∈ {1,2,4,8}`。這個 tile sweep 不需新程式就能先驗 H13 ＋ T4a 變體 A/B。
+  5. 依 4 的 ncu 數據定調優順序，H13 預期在 H9 之前。
 - ~~下一步（2026-11-11 晚）：A100 跑 `notebooks/t2_gate.ipynb` → 通過即 merge PR #2；調優第一項建議 = 內層 64-bit 除法改 32-bit/shift（待 A100 ncu 證實）。~~
 - **下一步（舊）**：(1) T1-fix-1 已交給 Codex（推到 PR #1 分支）→ Claude 複審 → merge → A100 跑 T1 full；(2) 平行：T2 prompt 交給 Codex（新分支 `codex/t2-two-pass-v1`，只動 `fft2/`）→ Claude 在 L4/A100 跑 `fft2_test` 驗證正確性。
 
@@ -115,6 +121,7 @@
 | 2026-11-11 | 實作由 Codex 負責（使用者有 Codex 額度要用）；使用者貼 prompt | Claude 審 PR、分析數據 |
 | 2026-11-11 | **GPU 平台固定為 Google Colab A100**，正式數據只認 `A100-SXM4-40GB` | 與舊數據同型號。每次執行前 notebook 先 assert GPU 名稱，不符就中止、不量。曾評估 gputw.ai（只有 A100 80GB、NT$38.4/hr、當時無現貨），未採用 |
 | 2026-11-11 | **GPU 執行改走官方 Colab CLI**（`google-colab-cli` 0.7.5，裝在使用者的 WSL Ubuntu，`--auth oauth2`） | Claude 可自行 `colab new --gpu A100`、`colab upload/exec/download`、`colab stop`；使用者不必開瀏覽器或貼結果。開機前 Claude 先徵得同意；用完立即 stop。費率實測：L4 1.94 單元/hr。A100 當天兩次分配失敗（Bad Gateway / timeout），fallback L4 |
+| 2026-11-12 | **使用者把規劃安排交給 Claude**：Claude 決定任務順序、寫與修 Codex prompt、審查與 merge PR、排 GPU 工作 | 使用者仍負責：GPU 花費（開 runtime）、把 prompt 貼給 Codex、審 optimization-log 結論（作品集措辭）。M1 檢查點（是否追 cuFFT）仍與使用者討論 |
 | 2026-11-12 | **A100 難分配時，G4（RTX PRO 6000 Blackwell，sm_120）只用來驗正確性**，正式平台仍是 A100-SXM4-40GB；不改用 G4 當正式平台 | G4 的 FP64 很弱，FP64 FFT 在 G4 上推論為計算瓶頸，「% of 實測頻寬上限」的分析不成立。Colab 選單上的 H100 需升級方案，目前不可選。A100 連不到時可換帳號再試 |
 
 ### Colab CLI 操作備忘

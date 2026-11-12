@@ -19,6 +19,18 @@ Read `CLAUDE.md`, `docs/plan.md` §5, `fft2/README.md` (incl. T4a's "Tuning vari
 6. Report per-kernel register count and spill from `nvcc -Xptxas -v` for sm_80 in the PR description (compile-time facts, not performance claims). If any variant spills, say so.
 7. Commit and push after each item. No performance claims.
 
+## Addendum 2026-11-12 — occupancy (H13, from the A100 gate, optimization-log L003)
+On A100, v1 at 2^24 b1 uses 135 KB shared memory per block, which allows **1 block/SM, 12.5% occupancy** (theoretical and achieved). Registers are 34–38/thread. `choose_tile` picks the largest tile that fits the opt-in limit, so most sizes end up with about 128 KiB per block. The kernels are latency-bound: ~10 warp cycles per issued instruction, at roughly 20–25% of HBM spec.
+8. In the register-radix path, keep data in registers between stages. Size the shared-memory buffer to **one exchange**, not the whole tile plus a second copy, and reuse it across stages.
+9. Add `PlanOptions::tile_policy`:
+   - `0` = v1 behavior (largest tile that fits). This stays the default.
+   - `1` = occupancy-aware: the smallest tile with ≥ 2 lanes (32 B coalescing) that gives ≥ 3 resident blocks/SM. Use `cudaOccupancyMaxActiveBlocksPerMultiprocessor` with the kernel's actual dynamic smem. If no tile reaches 3 blocks/SM, fall back to the best one available.
+   - Report `smem_bytes` and `blocks_per_sm` for both passes in `describe()`.
+10. In the README, add a per-L table for sm_80 (164 KB smem/SM, 2048 threads/SM, 64K regs/SM). Columns: lanes, smem/block, regs/thread from ptxas, and resulting blocks/SM for the v1 path and the register path. These are compile-time and model facts, not performance claims.
+11. Add `tile_policy ∈ {0,1}` to `fft2_test --variants`.
+
+If this task was already pasted into Codex before this addendum existed, paste this section as a follow-up message.
+
 ## Gate
 CPU: `make -C fft2 test-cpu` (incl. new staged-model tests), sm_80/sm_89 builds zero warnings.
 GPU (Claude): `fft2/fft2_test --variants` exit 0 on L4; then A/B on A100 together with T4a variants.

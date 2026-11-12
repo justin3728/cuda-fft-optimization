@@ -26,6 +26,10 @@ Planning was delegated to Claude on 2026-11-12 (`docs/plan.md` §8).
 4. Keep each PR under ~600 changed lines (excluding `results/`); split larger tasks.
 5. At most 2 Codex PRs open at once. Every task traces to a recorded hypothesis or a confirmed gap. To use Codex quota that would otherwise expire, pick small tasks from that list rather than speculative tooling.
 6. Book an A100 only when a batch of A/B comparisons is ready to run together.
+7. **A100 A/B cost control:**
+   - Time every variant at all sizes.
+   - Keep ncu on **every** variant, including the losers, because a failure needs its "why" too. But limit ncu to the representative sizes: 2^20 (L2-resident, judged by L2 metrics) and 2^24 (≫ L2, judged by HBM metrics).
+   - Re-time the library baselines (legacy, cuFFT, VkFFT) in the same allocation. Re-profile them with ncu only if the toolchain or GPU changed; otherwise cite the earlier log entry.
 
 ## Coding principles (Codex and Claude)
 Adapted from the Karpathy-inspired guidelines. They apply to every change in this repo.
@@ -90,9 +94,10 @@ wsl -e bash -lc 'colab --auth oauth2 stop -s NAME'
   1. **Prepare before allocating.** Have the script ready and the branch pushed before `new`. Allocate only when you can start the job immediately.
   2. **Send scripts over ssh stdin** (`ssh colab-NAME 'cat > /content/x.sh' < x.sh`), then check the remote byte count (`wc -c`) against the local file.
   3. **Verify that the job actually started.** About 30 s after launch, the log must show progress (GPU name, commit hash). If the log is empty or the process is missing, fix it or `stop` right away.
-  4. **Poll for liveness, not only completion.** Each poll checks for the done-file **and** for log growth or the job's process. If neither has changed for about 10 minutes, investigate. If the job is dead, `stop` the runtime immediately.
+  4. **Poll for liveness, not only completion.** Each poll checks for the done-file **and** for log growth or the job's process. If neither has changed for about 10 minutes, investigate. If the job is dead, `stop` the runtime immediately. When you check the process with `pgrep -f` over ssh, bracket the first letter of the pattern (`"[r]un_fft2_variants"`); otherwise the ssh command line matches itself and the job always looks alive.
   5. **Stop as soon as the job ends:** download, `stop`, then analyze offline. Never leave a runtime up while you write analysis or wait on Codex.
-  6. **Error path:** if anything fails (allocation, clone, build), `stop` first, then debug locally.
+  6. **Confirm nothing is left running.** After every `stop`, run `colab --auth oauth2 sessions`; it must list only the sessions you intend to keep. On 2026-11-12 a CPU runtime (`t4bgate`) from an earlier gate was found still running.
+  7. **Error path:** if anything fails (allocation, clone, build), `stop` first, then debug locally.
 - **SSH works (verified 2026-11-12; used for the L005 A100 run)** through `colab ssh --proxy-mode` as an OpenSSH ProxyCommand. A local `~/.ssh/config` entry maps `colab-NAME` to session `NAME`, user root.
   - Flow: `colab --auth oauth2 new -s NAME --gpu A100`, then `ssh -o BatchMode=yes colab-NAME 'CMD'`, then `colab --auth oauth2 stop -s NAME`.
   - The remote exit code comes back through ssh, and `git clone` of the public repo works on the runtime.

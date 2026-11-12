@@ -1,0 +1,9 @@
+# A100 A/B (L006): baseline, tile_policy, radix_mode, combos, T4a index/padding.
+n1=0 c=0 r=0
+n1=0 c=0 r=0 tp=1
+n1=0 c=0 r=0 rx=1
+n1=0 c=0 r=0 rx=2
+n1=0 c=0 r=0 tp=1 rx=1
+n1=0 c=0 r=0 tp=1 rx=2
+n1=0 c=0 r=0 im=1 pad=1
+n1=0 c=0 r=0 tp=1 rx=2 im=1 pad=1

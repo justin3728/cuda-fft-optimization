@@ -18,6 +18,7 @@ struct PlanOptions {
     int smem_padding = 0;  // 0, 1 or 2 unused complex elements per shared row.
     // 0 = v1 fit; 1 = 32 KiB target, at least 2 lanes; uses 0 if 2 cannot fit.
     int tile_policy = 0;
+    int radix_mode = 0;  // 0 = v1, 1 = register radix-8, 2 = register radix-16.
 };
 
 class Plan {

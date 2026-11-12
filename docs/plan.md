@@ -73,9 +73,9 @@
 | ID | 任務 | 負責 | 狀態 |
 |---|---|---|---|
 | T0 | Colab preflight：GPU 型號、nvcc、ncu 安裝與 counter 權限 | 使用者跑 `notebooks/colab_preflight.ipynb`，結果貼回 | ✅ L4 上通過（2026-11-11）；A100 型號待首次正式執行確認 |
-| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | 🔍 PR #1 已審；L4 quick 冒煙測試 7 階段全 OK（`results/smoke_l4_20261111/`）；修正輪 `docs/codex-tasks/T1-fix-1.md` 待交給 Codex |
+| M0 / T1 | 量測工具：bandwidth test、ncu 腳本、三方 sweep（CSV+圖）、VkFFT kernel 匯出。**不改演算法** | Codex | ✅ 2026-11-12 merge（fix-1 @ dce6093 複審通過：pytest 55 passed、shellcheck 乾淨、full dry-run ncu 擷取上限 334 kernels）。L4 quick 冒煙見 `results/smoke_l4_20261111/`。注意：legacy N=2^16 每 batch 另有一次 D2D `cudaMemcpyAsync`（非 kernel，ncu 看不到），分析趟數時要補上 |
 | ~~T1b~~ | ~~Colab notebook 包裝~~ → 不需要：改由 Claude 透過 Colab CLI 直接執行（§8） | — | ✖ 取消 |
-| T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ 等 T1-fix-1 merge + A100 排得到 |
+| T1-run | 在 Colab A100 跑 T1 full，commit `results/<tag>/` | Claude（經 Colab CLI） | ⏳ PR #1 已 merge，等 A100 |
 | T1-analysis | 分析：HBM/L2 實測上限、legacy 每 kernel 達成率、cuFFT/VkFFT 用了幾趟與各自達成率；證實或推翻 F5/F6 | Claude | ⏳ |
 | M2 / T2 | 2-pass v1（求正確）：`fft2/` 新 API、numpy 參考模型（CPU 可測）、GPU correctness 測試對 cuFFT。範圍 2^16–2^24 全走 2-pass，不做單 kernel 小 N | Codex | 🔍 PR #2 已審（CUDA 13.5 sm_80/sm_89 零警告編譯、pytest 193 passed）；**L4 gate 通過**（28 passed / 0 failed / 1 skip，rel L2 ≤ 6.1e-16，每次 execute 2 kernels，`results/t2_gate_l4_20261111/`）；**G4 正確性通過**（2026-11-12）；**A100 gate 通過**（2026-11-12，`results/t2_gate_a100_20261112/`）→ ⏳ 使用者 merge |
 | T2b | 把 `fft2` 接成 `bench/` 的第 4 個 backend + 變體 A/B 腳本（`docs/codex-tasks/T2b-bench-fft2-backend.md`，分支疊在 T1+T2 上） | Codex | 📤 2026-11-11 晚交給 Codex |

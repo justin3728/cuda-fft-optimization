@@ -88,6 +88,7 @@
 | 2026-11-11 | **GPU 執行改走官方 Colab CLI**（`google-colab-cli` 0.7.5，裝在使用者的 WSL Ubuntu，`--auth oauth2`） | Claude 可自行 `colab new --gpu A100`、`colab upload/exec/download`、`colab stop`；使用者不必開瀏覽器或貼結果。開機前 Claude 先徵得同意；用完立即 stop。費率實測：L4 1.94 單元/hr。A100 當天兩次分配失敗（Bad Gateway / timeout），fallback L4 |
 | 2026-11-12 | **使用者把規劃安排交給 Claude**：Claude 決定任務順序、寫與修 Codex prompt、審查與 merge PR、排 GPU 工作 | 使用者仍負責：GPU 花費（開 runtime）、把 prompt 貼給 Codex、審 optimization-log 結論（作品集措辭）。M1 檢查點（是否追 cuFFT）仍與使用者討論 |
 | 2026-11-12 | **A100 難分配時，G4（RTX PRO 6000 Blackwell，sm_120）只用來驗正確性**，正式平台仍是 A100-SXM4-40GB；不改用 G4 當正式平台 | G4 的 FP64 很弱，FP64 FFT 在 G4 上推論為計算瓶頸，「% of 實測頻寬上限」的分析不成立。Colab 選單上的 H100 需升級方案，目前不可選。A100 連不到時可換帳號再試 |
+| 2026-11-12 | **模式 A：Codex 負責全部實作，Claude 只做指揮**（寫規格、經 `codex exec` 直接派工、審查、跑 GPU、判讀數據）。Colab 仍由 Claude 操作 | 使用者想把 Claude 額度留給其他工作。Codex 訂閱約剩 1–2 個月，重的實作（T4t、T4b、T4c）要在這段時間內完成。若之後取消 Codex，實作改由 Sonnet 子代理接手（模式 B），規格與 gate 不變 |
 
 ### Colab CLI 操作備忘
 - 2026-11-12 起首選 SSH（`colab ssh --proxy-mode` 當 OpenSSH ProxyCommand），L004、L005 都這樣跑；細節見 `CLAUDE.md`。

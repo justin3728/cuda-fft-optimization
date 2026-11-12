@@ -18,7 +18,9 @@
 
 ## 下一步（依序）
 
-1. PR #14 L4 gate 通過後：派 T4c 第 2 輪（bench 軸），再跑 CI 與 L4 gate，然後合併。
+1. T4c：
+   - 第 1 輪（1b204e6）的 L4 gate：sm_89 和 sm_80 build PASS，0 warning，198 個 kernel，最多 180 個暫存器，0 spill。其餘結果見 PR #14 的留言。
+   - 第 2 輪（bench 軸）已用 `codex exec` 派出（effort low）。若 session 中斷，變更會留在 dispatch clone 的工作目錄：檢查 `git status` 和 `t4c_r2_run.log`，由 Claude 代為 commit、push，再跑 CI 和 L4 gate（`scripts/colab/gate_fft2.sh BRANCH`，另加 T2d 式的 2 列 sweep 檢查標籤），然後合併。
 2. 依序派 T4d（`docs/codex-tasks/T4d-fft2-defaults.md`）和 T4e，前一個合併後才派下一個。
 3. 三者都合併後開 A100，一次 A/B：T4c（tw/cx）、T4d 預設 vs v1、H15、index_mode 單獨一軸。依 CLAUDE.md PR 規則 7，ncu 只跑 2^20 和 2^24。
 4. 使用者審閱 L003、L005、L006 的措辭。

@@ -190,7 +190,7 @@ def sampling_metadata(config: dict, captured: int) -> dict:
 
 
 def validate_fft2_capture(kernels: list[Kernel]) -> None:
-    names = [re.search(r"\b(pass1_columns|pass2_rows)(?:\(|$)", kernel.name) for kernel in kernels]
+    names = [re.search(r"\b(pass1_columns|pass2_rows)(?:\(|<|$)", kernel.name) for kernel in kernels]
     if [match.group(1) if match else None for match in names] != ["pass1_columns", "pass2_rows"]:
         raise ValueError("fft2 capture must contain exactly pass1_columns then pass2_rows")
 

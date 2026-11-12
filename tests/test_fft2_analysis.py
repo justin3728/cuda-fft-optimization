@@ -83,6 +83,15 @@ def test_fft2_validation_rejects_partial_or_unrelated_captures(fixtures, change)
         validate_fft2_capture(kernels)
 
 
+def test_fft2_validation_accepts_templated_kernel_names(fixtures):
+    # T4a made both kernels templates on KernelVariant; ncu's demangled names carry the arguments.
+    kernels = parse_raw(fixtures / "ncu_fft2.csv")
+    for i, name in enumerate(["pass1_columns", "pass2_rows"]):
+        kernels[i] = replace(kernels[i], name=f"void fft2::(anonymous namespace)::{name}<fft2::(anonymous "
+                             f"namespace)::KernelVariant<1, 2, true>>(const double2*, double2*)")
+    validate_fft2_capture(kernels)
+
+
 def test_fft2_rejects_extrapolation_and_accounts_for_third_oop_buffer(fixtures):
     kernels = parse_raw(fixtures / "ncu_fft2.csv")
     with pytest.raises(ValueError, match="exactly two kernels"):

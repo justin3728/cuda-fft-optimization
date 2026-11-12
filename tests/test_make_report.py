@@ -12,6 +12,8 @@ from make_report import Missing, Record, Run, gap_values, generate_report, kerne
 
 FIXTURE = Path(__file__).parent / "fixtures/report"
 TAG = "smoke_l4_20261111"
+AUTO_FFT2 = "fft2[n1=0,c=0,r=0]"
+OOP_FFT2 = "fft2[n1=1024,c=4,r=8,oop=1]"
 
 
 def test_missing_metadata_and_non_a100_banner():
@@ -114,6 +116,24 @@ def test_fft2_optional_impl_detail(tmp_path, with_detail):
     else:
         assert "impl_detail" not in report
         assert "| fft2 | hot | 63.1296 | 0.727494 | 18.403 | ok |" in report
+
+
+def test_family_selection_preserves_full_labels_and_auto_first(tmp_path):
+    # Synthetic CPU schema/arithmetic cases, not GPU measurements. The oop label
+    # sorts before the auto label lexically, so this checks the explicit priority.
+    oop = "fft2[n1=0,c=0,r=0,oop=1]"
+    rows = [dict(impl=impl, N=128, batch=1, batch_mode="b1", timing_mode=timing,
+                 status="ok", time_ms_median=time)
+            for impl, time in ((oop, .004), (AUTO_FFT2, .002), ("cufft", .008))
+            for timing in ("hot", "cold")]
+    write_rows(tmp_path / "variants/sweep/raw.csv", rows)
+    report = generate_report(tmp_path, "variants", impls=("fft2",))
+    sweep = report.split("## FFT sweep")[1].split("## Per-kernel profiles")[0]
+    assert sweep.index(f"| {AUTO_FFT2} |") < sweep.index(f"| {oop} |")
+    assert f"| {AUTO_FFT2} | hot | 2 | 4 |" in sweep
+    assert f"| {oop} | hot | 4 | 2 |" in sweep
+    assert "| cufft |" not in sweep
+    assert "fft2[" not in generate_report(tmp_path, "variants", impls=("cufft",))
 
 
 def test_wrong_results_do_not_get_derived_metrics(tmp_path):
@@ -241,9 +261,12 @@ def test_before_after_partial_overlap(tmp_path):
     write_rows(current / "sweep/raw.csv", new)
     report = generate_report(tmp_path, "current", baseline_tag="before", impls=("legacy",))
     comparison = report.split("## Before / after")[1].split("## Missing data")[0]
-    assert "| 65536 | 1 | b1 | legacy | hot | 126.259 | 63.1296 | -63.1296 | -50 | ok | ok |" in comparison
-    assert "| 1048576 |" not in comparison
-    assert "| 16777216 |" not in comparison
+    shared, unmatched = comparison.split("### Non-overlapping sweep configurations")
+    assert "| 65536 | 1 | b1 | legacy | hot | 126.259 | 63.1296 | -63.1296 | -50 | ok | ok |" in shared
+    assert "| 1048576 |" not in shared
+    assert "| 16777216 |" not in shared
+    assert "| 1048576 | 1 | b1 | legacy | hot | before only |" in unmatched
+    assert "| 16777216 | 1 | b1 | legacy | hot | after only |" in unmatched
     assert "### Baseline environment: before" in comparison
     assert "smoke test, not official numbers" in comparison
 

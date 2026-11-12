@@ -248,24 +248,42 @@ def config_sort(identity):
     return tuple((0, number(value)) if number(value) is not None else (1, str(value)) for value in identity)
 
 
+def impl_family(label):
+    return str(label).split("[", 1)[0]
+
+
+def impl_sort(label):
+    return (impl_family(label), label != "fft2[n1=0,c=0,r=0]", label)
+
+
+def series_sort(identity):
+    """Sort config/full-label keys without collapsing labelled implementations."""
+    return (config_sort(identity[:len(CONFIG)]) + (impl_sort(identity[len(CONFIG)]),)
+            + config_sort(identity[len(CONFIG) + 1:]))
+
+
 def sweep_entries(run, impls):
     rows = indexed(run.sweeps, (*CONFIG, "impl", "timing_mode"), variants=True)
     configs = {key(row, CONFIG) for row in run.sweeps if key(row, CONFIG) is not None}
     output = []
     for config in sorted(configs, key=config_sort):
-        for impl in impls:
-            variants = sorted({detail(row) for row in run.sweeps
-                               if key(row, CONFIG) == config and row.data.get("impl") == impl}) or [""]
-            for variant in variants:
-                for timing in ("hot", "cold"):
-                    identity = (*config, impl, timing, variant)
-                    absent = Record(dict(zip((*CONFIG, "impl", "timing_mode"), (*config, impl, timing))),
-                                    f"{run.source(run.sweep_file)} ({', '.join(identity)})")
-                    output.append(rows.get(identity, absent))
+        for family in impls:
+            labels = sorted({str(row.data["impl"]) for row in run.sweeps
+                             if key(row, CONFIG) == config and impl_family(row.data.get("impl")) == family},
+                            key=impl_sort) or [family]
+            for impl in labels:
+                variants = sorted({detail(row) for row in run.sweeps
+                                   if key(row, CONFIG) == config and row.data.get("impl") == impl}) or [""]
+                for variant in variants:
+                    for timing in ("hot", "cold"):
+                        identity = (*config, impl, timing, variant)
+                        absent = Record(dict(zip((*CONFIG, "impl", "timing_mode"), (*config, impl, timing))),
+                                        f"{run.source(run.sweep_file)} ({', '.join(identity)})")
+                        output.append(rows.get(identity, absent))
     # Incomplete identities remain visible; they cannot join another missing key.
     output += [row for row in run.sweeps
                if key(row, (*CONFIG, "impl", "timing_mode")) is None
-               and (row.data.get("impl") in impls or isinstance(row.value("impl"), Missing))]
+               and (impl_family(row.data.get("impl")) in impls or isinstance(row.value("impl"), Missing))]
     return output
 
 
@@ -384,21 +402,21 @@ def profiles(run, impls):
                     continue
                 seen_stems.add(path.stem)
                 for row in rows:
-                    if row.data.get("impl") not in impls and not isinstance(row.value("impl"), Missing):
+                    if impl_family(row.data.get("impl")) not in impls and not isinstance(row.value("impl"), Missing):
                         continue
                     identity = profile_key(row) or (row.source,)
                     groups.setdefault(identity, Profile(row, [], Record({}, run.source(run.total_file))))
                     groups[identity].kernels.append(row)
     totals = indexed(run.totals, PROFILE, variants=True)
     for entry in [*run.totals, *run.rows("ncu/index.csv")]:
-        if entry.data.get("impl") not in impls:
+        if impl_family(entry.data.get("impl")) not in impls:
             continue
         identity = profile_key(entry) or (entry.source,)
         groups.setdefault(identity, Profile(entry, [], Record({}, run.source(run.total_file))))
     for identity, profile in groups.items():
         profile.total = totals.get(identity, profile.total)
         indexed(profile.kernels, ("kernel_id",))
-    return sorted(groups.values(), key=lambda profile: config_sort(
+    return sorted(groups.values(), key=lambda profile: series_sort(
         tuple(str(profile.config.data.get(field, "")) for field in (*CONFIG, "impl", "cache_control"))
         + (detail(profile.config),)))
 
@@ -539,9 +557,9 @@ def comparison_section(current, baseline, md, impls):
     columns = ["N", "Batch", "Batch label", "Impl"] + (["impl_detail"] if has_detail else [])
     columns += ["Timing", "Before (µs)", "After (µs)", "Delta (µs)", "Delta (%)", "Before status", "After status"]
     rows = []
-    for identity in sorted(old.keys() & new.keys(), key=config_sort):
+    for identity in sorted(old.keys() & new.keys(), key=series_sort):
         before, after = old[identity], new[identity]
-        if after.data.get("impl") not in impls:
+        if impl_family(after.data.get("impl")) not in impls:
             continue
         values = [after.value(field) for field in (*CONFIG, "impl")]
         if has_detail:
@@ -557,7 +575,20 @@ def comparison_section(current, baseline, md, impls):
         reason = Missing((f"{baseline.source(baseline.sweep_file)} and {current.source(current.sweep_file)}: "
                           "missing shared requested sweep configurations",))
         rows = [[reason] * len(columns)]
-    return output + md.table(columns, rows)
+    output += md.table(columns, rows)
+    unmatched = []
+    for identity in sorted(old.keys() ^ new.keys(), key=series_sort):
+        row = (old if identity in old else new)[identity]
+        if impl_family(row.data.get("impl")) not in impls:
+            continue
+        values = [row.value(field) for field in (*CONFIG, "impl")]
+        if has_detail:
+            values += [row.value("impl_detail")]
+        unmatched.append(values + [row.value("timing_mode"), "before only" if identity in old else "after only"])
+    if unmatched:
+        output += "### Non-overlapping sweep configurations\n\nThese full keys have no counterpart and are not compared.\n\n"
+        output += md.table(columns[:4 + has_detail] + ["Timing", "Present in"], unmatched)
+    return output
 
 
 def plots_section(run, md, out):

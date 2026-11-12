@@ -472,10 +472,10 @@ void dispatch_io_width(int lanes, const Action& action) {
     if (lanes == Width) { action(RegisterIO<L, B, Width, Mode>{}); return; }
     // Do not generate oversized register arrays for shapes that cannot fit on
     // either target (A100: 163 KiB opt-in, L4: 99 KiB). Includes all auto tiles.
-    if constexpr (Width < 8 && (Width + 1) * (1 << L) * sizeof(cuDoubleComplex) <= 163 * 1024) {
-        dispatch_io_width<L, B, Mode, Width + 1>(lanes, action);
+    if constexpr (Width < 8 && (Width * 2) * (1 << L) * sizeof(cuDoubleComplex) <= 163 * 1024) {
+        dispatch_io_width<L, B, Mode, Width * 2>(lanes, action);
     } else {
-        throw std::runtime_error("fft2: register I/O requires lanes 1..8 and data tile <= 163 KiB");
+        throw std::runtime_error("fft2: register I/O requires lanes in {1, 2, 4, 8} and data tile <= 163 KiB");
     }
 }
 
@@ -718,9 +718,9 @@ struct Plan::Impl {
         rows = choose_tile(n2, n1, opts.tile_rows, smem_padding, limit, "tile_rows", tile_policy, twiddle_mode);
         radix1 = detail::resolve_radix(radix_mode, n1, cols, kThreads);
         radix2 = detail::resolve_radix(radix_mode, n2, rows, kThreads);
-        if (io_mode != 0 && (cols > 8 || rows > 8
+        if (io_mode != 0 && (cols > 8 || rows > 8 || !power_of_two(cols) || !power_of_two(rows)
             || shared_bytes(n1, cols, 0) > 163 * 1024 || shared_bytes(n2, rows, 0) > 163 * 1024)) {
-            throw std::runtime_error("fft2: register I/O requires lanes 1..8 and data tile <= 163 KiB");
+            throw std::runtime_error("fft2: register I/O requires lanes in {1, 2, 4, 8} and data tile <= 163 KiB");
         }
         log_cols = integer_log2(static_cast<size_t>(cols));
         log_rows = integer_log2(static_cast<size_t>(rows));

@@ -176,6 +176,8 @@ std::vector<fft2::PlanOptions> variants_for(fft2::PlanOptions options, bool vari
     }
     result.push_back(default_options);  // Default plan at every size, also with --variants.
     for (int io : {1, 2}) {
+        if ((options.tile_cols != 0 && (options.tile_cols & (options.tile_cols - 1)) != 0)
+            || (options.tile_rows != 0 && (options.tile_rows & (options.tile_rows - 1)) != 0)) { continue; }
         auto io_options = default_options;
         io_options.io_mode = io;
         result.push_back(io_options);
@@ -425,6 +427,17 @@ bool api_checks() {
                 options.radix_mode = 0;
                 fft2::Plan candidate(size_t{1} << 16, 1, options);
             }, "register io with legacy radix");
+            for (int lanes : {3, 5, 6, 7}) {
+                for (bool columns : {false, true}) {
+                    expect_error([mode, lanes, columns] {
+                        fft2::PlanOptions options;
+                        options.io_mode = mode;
+                        options.tile_cols = columns ? lanes : 1;
+                        options.tile_rows = columns ? 1 : lanes;
+                        fft2::Plan candidate(size_t{1} << 16, 1, options);
+                    }, "register io with non-power-of-two lanes");
+                }
+            }
         }
         const fft2::Plan mixed(size_t{1} << 18, 1, {512, 8, 4});
         if (mixed.describe().find("radix_mode=-1(p1=2,p2=1)") == std::string::npos) {

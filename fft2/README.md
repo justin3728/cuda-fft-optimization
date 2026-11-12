@@ -23,6 +23,9 @@ and ran the assertions/expected-error checks; this is not a pytest or full
 byte, and the original CUDA `block_fft` source was unchanged. Python bytecode
 compilation and `git diff --check` also passed. Neither make nor a C++/CUDA
 compiler is available here, so the host planner binary was not tested.
+T4c adds shared-root and full-cross-table options (H12), both disabled by
+default. CUDA builds, ptxas registers/spills, GPU correctness and the L4
+runtime gate remain pending; no performance claim is made.
 
 ## Build and gates
 
@@ -62,9 +65,14 @@ default batch-1 plan descriptions and a summary; it does not execute FFTs.
 `--variants` runs that same full list of 29 configurations for every v1
 `index_mode` in `{0,1}`, `smem_padding` in `{0,1,2}` and `tile_policy` in
 `{0,1}`, plus `radix_mode` in `{1,2}` crossed with `tile_policy` in `{0,1}`
-at `index_mode=0, smem_padding=0`: 464 configuration outcomes, including
-explicit skips. New radix paths must meet `1e-14` relative L2 vs cuFFT for
-both out-of-place and in-place execution; v1 keeps its `1e-12` gate. Each line
+at `index_mode=0, smem_padding=0`: 464 original configuration outcomes.
+T4c adds `(twiddle_mode,cross_mode)` pairs `(1,0)`, `(0,1)`, `(1,1)` on
+`radix_mode={0,2}` and `tile_policy={0,1}`, with index/padding fixed at zero.
+These 12 additional variants run at batch 1 for exponents 16/19/20/22/24,
+and on both custom split/partial-tile cases at batch 3: 84 additional
+outcomes, including resource skips. All `--variants` paths must meet
+`1e-14` relative L2 vs cuFFT for both out-of-place and in-place execution;
+the default non-variant gate keeps `1e-12`. Each line
 identifies all axes, the requested split/tiles, and either the actual plan/errors
 or the skip/failure reason. Per-axis summaries and a final total follow. Any failure, API failure,
 or axis with no passing configurations makes the exit status nonzero. Shared
@@ -77,16 +85,19 @@ To keep the L4 gate bounded, variants share one random input and one cuFFT
 reference per configuration, use one fft2 plan at a time, and execute only one
 out-of-place plus one in-place transform per variant. The input stays intact;
 a device copy restores the output buffer before the in-place test. The target
-is under approximately five minutes on L4; elapsed GPU test time still needs
+is under approximately six minutes on L4; elapsed GPU test time still needs
 to be checked there. `--variants --describe` describes all feasible default
 batch-1 variant plans and lists the infeasible combinations without FFTs.
 
 The default device cap is 6144 MiB, further limited to 90% of currently free
 VRAM. The test queries exact cuFFT scratch requirements with automatic
 allocation disabled, then budgets two data buffers, the FFT workspace,
-cuFFT scratch, and a 16 MiB reserve for tables/overhead. The default host cap
+cuFFT scratch, and a 16 MiB reserve for tables/overhead, plus `16*N` bytes
+when the full cross table is enabled. The default host cap
 is 2048 MiB: one full reference array plus a bounded 16 MiB comparison tile.
-Large combinations exceeding either cap are logged as skips. For example:
+Full-cross variants also budget their transient `16*N` host table, which
+does not overlap the comparison tile. Large combinations exceeding either
+cap are logged as skips. For example:
 
 ```bash
 fft2/fft2_test --max-device-mib 12288 --max-host-mib 4096
@@ -173,6 +184,8 @@ candidate.execute(device_input, device_output, stream);
 | `smem_padding` | `0` (default), `1`, `2` | **H10:** changing the shared row stride from `lanes` to `lanes+padding` may reduce shared-memory bank conflicts. Each padding unit is one unused FP64 complex element per element-row, so allocation is `length*(lanes+padding)*16` bytes. |
 | `tile_policy` | `0` (default), `1` | **H13:** policy 0 keeps v1's largest fitting power-of-two width up to 8. Policy 1 chooses the largest power-of-two width bounded by the other dimension and 32 KiB (including padding), with at least two lanes; if two lanes exceed the device limit, it uses policy 0's choice. Explicit C/R override either policy independently. |
 | `radix_mode` | `0` (default), `1`, `2` | **H11:** keep v1, fuse radix-8 in registers, or fuse radix-16 in registers. Internal roots are constexpr; external twiddles use the existing length-L table. |
+| `twiddle_mode` | `0` (default), `1` | **H12:** read roots through `__ldg`, or stage all L roots in shared once per block. Both FFT paths use this choice. Shared bytes become `length*(lanes+padding+twiddle_mode)*16`; both tile policies include roots in their budget. |
+| `cross_mode` | `0` (default), `1` | **H12:** keep the high/low product, or upload one table of N entries and perform one lookup per element. `describe()` reports `cross_table_bytes`; tables do not scale with batch. |
 
 The host dispatches the length and radix as template parameters; all stage
 sizes and internal butterfly loops are compile-time choices. The stage radices
@@ -268,7 +281,7 @@ A100 batch-1/batched A/B remain required; policy 0 stays the default.
 To accept/reject these hypotheses, Claude must measure on **A100-SXM4-40GB**:
 
 1. First run the full variant correctness gate, and record wall time on L4
-   against the approximately five-minute target. On A100 record N, batch,
+   against the approximately six-minute target. On A100 record N, batch,
    split, actual C/R, padding, shared bytes, and the two-kernel launch trace.
    Use the same input, build flags, clock policy (`--clock-control none`),
    and explicit cache policy for every pair.
@@ -383,8 +396,16 @@ DRAM/L2 transactions, spills and cache effects still need GPU measurement.
 
 Within-pass tables hold `W_N1^j` and `W_N2^j`, precomputed on the host in
 `long double` and stored as complex FP64 in device global memory. Kernel
-loads use the read-only path (`__ldg` on the two double components). They are
-not included in the shared tile budget.
+loads use the read-only path (`__ldg` on the two double components) by default.
+With `twiddle_mode=1`, threads cooperatively copy all L roots to a disjoint
+shared-memory tail after the padded exchange tile. The existing input-load
+barrier publishes roots before the first butterfly stage. Both legacy and
+register FFT paths read that tail with ordinary loads; `__ldg` is used only
+for global tables. Both tile policies include the additional `16*L` bytes,
+including explicit widths and policy 1's fallback. On the modeled L4 limit,
+a 4096-point FFT plus shared roots cannot fit even one lane (128 KiB).
+These modes use block-uniform runtime branches, retaining the existing
+template matrix; their instruction/resource cost needs GPU measurement.
 
 The cross twiddle uses `B=2^ceil(log2(N)/2)`, a low table of B entries
 `low[j]=W_N^j` and a high table of N/B entries `high[j]=W_N^(j*B)`:
@@ -394,19 +415,25 @@ a = (uint64_t(n2) * uint64_t(k1)) % uint64_t(N)
 W_N^a = high[a / B] * low[a % B]
 ```
 
-Both tables are O(sqrt(N)); even an explicitly asymmetric split uses B
+In `cross_mode=0`, both tables are O(sqrt(N)); even an explicitly asymmetric split uses B
 derived from N. Host angles are formed as `-2*pi*(integer_exponent % N)/N`
 before any floating-point trigonometry. No large unreduced product becomes
 an angle. The NumPy table construction uses the same integer reduction and
-long-double angle calculation. All four tables together use at most 256 KiB
-over the supported range; only the workspace scales with batch.
+long-double angle calculation. With `cross_mode=0`, all four tables together
+use at most 256 KiB over the supported range. `cross_mode=1` instead allocates
+only `full[a]=W_N^a` (N complex entries) for the cross twiddle, using the same
+host angle calculation. Each element uses a single full-table lookup instead
+of two lookups and their complex product. This adds footprint up to 256 MiB
+at `N=2^24`; `describe()` reports the selected cross table's bytes and both
+modes. Only workspace scales with batch. No recurrence is used.
 
 ## Shared-memory budgets (automatic split and tiles)
 
 These are **calculated allocation sizes**, not measurements. Default policy 0
 chooses the largest power-of-two tile width <= 8 fitting the device's queried
 `cudaDevAttrMaxSharedMemoryPerBlockOptin` limit. Each pass needs exactly
-`length*(lanes+padding)*16` bytes; the table below uses default padding 0.
+`length*(lanes+padding+twiddle_mode)*16` bytes; the table below uses defaults
+padding 0 and twiddle mode 0.
 The reference tests check these budgets for all three padding values.
 
 | log2 N | N1 x N2 | A100 C / R | A100 pass 1 / 2 KiB | L4 C / R | L4 pass 1 / 2 KiB |

@@ -19,6 +19,8 @@ struct PlanOptions {
     // 0 = v1 fit; 1 = 32 KiB target, at least 2 lanes; uses 0 if 2 cannot fit.
     int tile_policy = 0;
     int radix_mode = 0;  // 0 = v1, 1 = register radix-8, 2 = register radix-16.
+    int twiddle_mode = 0;  // 0 = __ldg roots, 1 = length-L roots staged in shared.
+    int cross_mode = 0;    // 0 = high/low product, 1 = one length-N table.
 };
 
 class Plan {

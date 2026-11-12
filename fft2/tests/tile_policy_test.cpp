@@ -8,9 +8,9 @@
 namespace {
 
 void expect_resource_error(int length, int other, int requested, int padding,
-                           std::size_t limit, int policy) {
+                           std::size_t limit, int policy, int twiddle_mode = 0) {
     try {
-        (void)fft2::detail::choose_tile(length, other, requested, padding, limit, "tile_cols", policy);
+        (void)fft2::detail::choose_tile(length, other, requested, padding, limit, "tile_cols", policy, twiddle_mode);
     } catch (const std::runtime_error& error) {
         assert(std::string(error.what()).find("device opt-in shared-memory limit=") != std::string::npos);
         return;
@@ -63,5 +63,15 @@ int main() {
     assert(fft2::detail::choose_tile(4096, 256, 0, 1, 163 * 1024, "tile_rows", 1) == 1);
     assert(fft2::detail::choose_tile(2048, 256, 0, 2, 99 * 1024, "tile_rows", 1) == 1);
     assert(fft2::detail::choose_tile(1024, 256, 0, 0, 32 * 1024 - 1, "tile_rows", 1) == 1);
+    for (int policy : {0, 1}) {
+        assert(fft2::detail::shared_bytes(1024, 3, 2, 1) == 96 * 1024);
+        assert(fft2::detail::choose_tile(1024, 256, 3, 0, 64 * 1024, "tile_cols", policy, 1) == 3);
+        expect_resource_error(1024, 256, 3, 0, 64 * 1024 - 1, policy, 1);
+        assert(fft2::detail::choose_tile(4096, 256, 0, 0, 163 * 1024, "tile_rows", policy, 1) == 1);
+        expect_resource_error(4096, 256, 0, 0, 99 * 1024, policy, 1);
+        expect_resource_error(2048, 256, 0, 2, 99 * 1024, policy, 1);
+    }
+    assert(fft2::detail::choose_tile(256, 256, 0, 0, 99 * 1024, "tile_cols", 1, 1) == 4);
+    assert(fft2::detail::choose_tile(2048, 256, 0, 0, 99 * 1024, "tile_cols", 0, 1) == 2);
     std::cout << "tile policy CPU checks PASS\n";
 }
